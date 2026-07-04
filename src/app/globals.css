@@ -1,0 +1,339 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-color: #FFFFFF;
+    --text-color: #000000;
+    --border-color: #EAEAEA;
+    --accent-color: #FF5C00;
+    --accent-hover: #E05200;
+    --muted-color: #666666;
+  }
+
+  * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+
+  html {
+    scroll-behavior: auto; /* Lenis handles smooth scroll */
+  }
+
+  /* Lenis — prevent native scroll flash before JS initializes */
+  html.lenis {
+    height: auto;
+  }
+  html.lenis.lenis-smooth {
+    scroll-behavior: auto;
+  }
+  html.lenis.lenis-smooth [data-lenis-prevent] {
+    overscroll-behavior: contain;
+  }
+  html.lenis.lenis-stopped {
+    overflow: auto;
+  }
+
+  body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  @media (min-width: 1024px) {
+    html {
+      font-size: 80%;
+    }
+  }
+
+  ::selection {
+    background: var(--accent-color);
+    color: #fff;
+  }
+
+  button, a {
+    outline: none;
+  }
+
+  button:focus-visible, a:focus-visible {
+    box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px var(--accent-color);
+  }
+
+  /* ──── Custom cursor: only hide native cursor when the custom one is
+       actually active (mouse pointer, no reduced-motion). The class is
+       toggled from CustomCursor.tsx so SSR / touch / a11y users keep the
+       native cursor and can click links/buttons normally. ──── */
+  @media (pointer: fine) {
+    html.custom-cursor-active,
+    html.custom-cursor-active * {
+      cursor: none;
+    }
+  }
+}
+
+@layer components {
+  /* ===== Buttons ===== */
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background-color: var(--accent-color);
+    color: #ffffff;
+    border: 1px solid var(--accent-color);
+    padding: 0 1.5rem;
+    height: 3rem;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    user-select: none;
+    cursor: pointer;
+    text-decoration: none;
+    width: 100%;
+    position: relative;
+    overflow: hidden;
+  }
+  @media (min-width: 640px) {
+    .btn-primary {
+      width: auto;
+    }
+  }
+  .btn-primary::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: rgba(255, 255, 255, 0.12);
+    transform: translateX(-100%) skewX(-12deg);
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .btn-primary:hover::after {
+    transform: translateX(0) skewX(-12deg);
+  }
+  .btn-primary:hover {
+    background-color: var(--accent-hover);
+    border-color: var(--accent-hover);
+    box-shadow: 0 4px 20px rgba(255, 92, 0, 0.25);
+    transform: translateY(-1px);
+  }
+  .btn-primary:active {
+    transform: scale(0.97) translateY(0);
+  }
+
+  .btn-outline {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background-color: transparent;
+    color: var(--text-color);
+    border: 1px solid #D4D4D4;
+    padding: 0 1.5rem;
+    height: 3rem;
+    border-radius: 4px;
+    font-weight: 500;
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
+    transition: all 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+    user-select: none;
+    cursor: pointer;
+    text-decoration: none;
+    width: 100%;
+    position: relative;
+  }
+  @media (min-width: 640px) {
+    .btn-outline {
+      width: auto;
+    }
+  }
+  .btn-outline:hover {
+    border-color: var(--text-color);
+    background-color: rgba(0, 0, 0, 0.03);
+    transform: translateY(-1px);
+  }
+  .btn-outline:active {
+    transform: scale(0.97) translateY(0);
+  }
+
+  /* ===== Section Label (mono, small, uppercase) ===== */
+  .section-label {
+    font-family: var(--font-geist-mono), monospace;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    color: var(--muted-color);
+  }
+
+  /* ===== Card ===== */
+  .card {
+    border: 1px solid var(--border-color);
+    background-color: #FFFFFF;
+    padding: 1rem;
+    border-radius: 8px;
+    cursor: default;
+  }
+  @media (min-width: 640px) {
+    .card { padding: 1.5rem; }
+  }
+  @media (min-width: 768px) {
+    .card { padding: 2rem; }
+  }
+  .card:hover {
+    border-color: #D4D4D4;
+  }
+
+  /* ===== Horizontal Rule ===== */
+  .rule {
+    width: 100%;
+    height: 1px;
+    background-color: var(--border-color);
+  }
+
+  /* ===== Form Input ===== */
+  .form-input {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: #ffffff;
+    border: 1px solid #EAEAEA;
+    border-radius: 6px;
+    color: #000000;
+    font-size: 0.875rem;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    outline: none;
+  }
+  .form-input::placeholder { color: #888888; }
+  .form-input:focus {
+    border-color: #000000;
+    box-shadow: 0 0 0 1px #000000;
+  }
+
+  /* ===== Craft Icon ===== */
+  .craft-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.5s ease;
+  }
+  .craft-icon:hover {
+    transform: scale(1.15) rotate(3deg);
+    filter: drop-shadow(0 0 6px rgba(255, 92, 0, 0.3));
+  }
+
+  /* ===== Craft Icon Pulse ===== */
+  .craft-icon-pulse {
+    animation: craftPulse 3s ease-in-out infinite;
+  }
+
+  /* ===== Stagger Children ===== */
+  .stagger-children > * {
+    opacity: 0;
+  }
+
+  /* ===== Hover Lift ===== */
+  .hover-lift {
+    transition: transform 0.3s ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-2px);
+  }
+}
+
+@layer utilities {
+  .bg-grid-pattern {
+    background-size: 32px 32px;
+    background-image: 
+      linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px);
+  }
+
+  .bg-dot-pattern {
+    background-image: radial-gradient(rgba(0,0,0,0.1) 1px, transparent 1px);
+    background-size: 16px 16px;
+  }
+
+  /* Subtle engineering grid background */
+  .grid-lines {
+    background-size: 32px 32px;
+    background-image:
+      linear-gradient(to right, rgba(0,0,0,0.03) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(0,0,0,0.03) 1px, transparent 1px);
+  }
+  @media (min-width: 768px) {
+    .grid-lines {
+      background-size: 48px 48px;
+    }
+  }
+
+  /* ──── Grain / Noise texture utilities ──── */
+
+  /** 
+   * Subtle grain overlay using an inline SVG data URI.
+   * Apply to a card or section to break up flat colour fields.
+   * Works as a background-image so content sits on top naturally.
+   */
+  .grain-bg {
+    position: relative;
+  }
+  .grain-bg::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.07;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    background-repeat: repeat;
+    background-size: 256px 256px;
+    z-index: 0;
+  }
+  .grain-bg > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  /** 
+   * Heavier grain — use when you want more texture presence.
+   */
+  .grain-bg-heavy::after {
+    opacity: 0.14;
+  }
+
+  /* ──── Magazine grid utilities ──── */
+
+  /** Inline horizontal rule used as section divider in magazine layouts */
+  .rule-magazine {
+    width: 100%;
+    height: 1px;
+    background-color: #EAEAEA;
+    margin: 0;
+  }
+
+  /** Large background step number (magazine-style behind content) */
+  .step-number-bg {
+    font-size: clamp(4rem, 8vw, 8rem);
+    font-weight: 700;
+    color: #F2F2F2;
+    line-height: 1;
+    user-select: none;
+    pointer-events: none;
+  }
+}
+
+/* ──── Global SVG grain filter (available for any element via filter CSS) ──── */
+
+@layer base {
+  /* 
+   * Invisible SVG that registers the grain filter globally.
+   * Use `filter: url(#global-grain)` on any element.
+   */
+  .sr-only-svg {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+  }
+}
+
