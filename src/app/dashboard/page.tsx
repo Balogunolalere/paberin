@@ -39,6 +39,23 @@ const ESCALATION_STATUS_CLASS: Record<string, string> = {
   REJECTED: 'bg-[#FFF7F0] text-[#E05200] border-[#FFD9BF]',
 };
 
+/* ── Relative time formatter (e.g. "2 hours ago") for Recent Updates ── */
+function relativeTime(iso: string): string {
+  if (!iso) return '';
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return '';
+  const diffMs = Date.now() - then;
+  if (diffMs < 0) return 'just now';
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
 function StatCard({ label, value }: { label: string; value: string | number }) {
   return (
     <div className="card">
@@ -51,7 +68,7 @@ function StatCard({ label, value }: { label: string; value: string | number }) {
 }
 
 function DashboardContent() {
-  const { customer, logout } = usePaberinAuth();
+  const { customer, logout, updateProfile } = usePaberinAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -76,6 +93,13 @@ function DashboardContent() {
   const [escalationsLoading, setEscalationsLoading] = useState(false);
   const [escalationsError, setEscalationsError] = useState<string | null>(null);
 
+  /* ── Profile edit state (Feature 1) ── */
+  const [showProfileEdit, setShowProfileEdit] = useState(false);
+  const [editName, setEditName] = useState('');
+  const [editPhone, setEditPhone] = useState('');
+  const [editEmail, setEditEmail] = useState('');
+  const [profileSaved, setProfileSaved] = useState(false);
+
   const loadOrders = useCallback(async () => {
     if (!customer?.phone) return;
     setLoading(true);
@@ -95,8 +119,18 @@ function DashboardContent() {
     setEscalationsLoading(true);
     setEscalationsError(null);
     try {
-      const data = await api.getEscalations(customer.phone);
-      setEscalations(Array.isArray(data) ? data : []);
+      const data: any = await api.getEscalations(customer.phone);
+      // The admin API returns { data: { escalations: [...] } }. After
+      // apiFetch unwraps `data.data`, we get { escalations: [...] }.
+      // Handle that nested shape, a plain array, and a few fallbacks.
+      const list = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.escalations)
+          ? data.escalations
+          : Array.isArray(data?.data)
+            ? data.data
+            : [];
+      setEscalations(list);
     } catch (err: any) {
       // The escalations endpoint may not be live yet — show empty, no error.
       setEscalations([]);
@@ -196,6 +230,47 @@ function DashboardContent() {
     .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
   const activeCount = orders.filter((o) => activeStates.includes(o.state)).length;
 
+  /* ── Recent Updates: last 3 orders by updatedAt (Feature 3) ── */
+  const recentUpdates = [...orders]
+    .sort(
+      (a, b) =>
+        new Date(b.updatedAt || b.createdAt).getTime() -
+        new Date(a.updatedAt || a.createdAt).getTime()
+    )
+    .slice(0, 3);
+
+  /* ── Profile editor (Feature 1) ── */
+  const openProfileEdit = () => {
+    setEditName(customer?.name || '');
+    setEditPhone(customer?.phone || '');
+    setEditEmail(customer?.email || '');
+    setProfileSaved(false);
+    setShowProfileEdit(true);
+  };
+
+  const saveProfile = () => {
+    updateProfile({
+      name: editName.trim() || customer?.name,
+      phone: editPhone.trim() || customer?.phone,
+      email: editEmail.trim() || customer?.email,
+      lastSeen: new Date().toISOString(),
+    });
+    setProfileSaved(true);
+    setTimeout(() => {
+      setShowProfileEdit(false);
+      setProfileSaved(false);
+    }, 900);
+  };
+
+  /* ── Reorder: jump to the order page with service + qty pre-filled (Feature 2) ── */
+  const handleReorder = (o: Order) => {
+    const params = new URLSearchParams();
+    if (o.serviceType) params.set('service', o.serviceType);
+    if (o.quantity) params.set('qty', String(o.quantity));
+    const qs = params.toString();
+    window.location.href = `/order${qs ? `?${qs}` : ''}`;
+  };
+
   return (
     <div className="max-w-[90rem] mx-auto px-4 sm:px-6 md:px-10 py-12 sm:py-16 md:py-20">
       {/* Header */}
@@ -228,6 +303,142 @@ function DashboardContent() {
             </button>
           </div>
         </div>
+      </ScrollReveal>
+
+      {/* Recent Updates (Feature 3) */}
+      {recentUpdates.length > 0 && (
+        <ScrollReveal delay={0.05}>
+          <div className="mb-10">
+            <div className="flex items-center gap-2 mb-4">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#FF5C00" strokeWidth="1.6">
+                <path d="M10 2a6 6 0 00-6 6c0 3-1 4-2 5h16c-1-1-2-2-2-5a6 6 0 00-6-6zM8 17a2 2 0 004 0" />
+              </svg>
+              <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                Recent Updates
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              {recentUpdates.map((o) => (
+                <button
+                  key={o.orderNumber}
+                  onClick={() => openDetail(o)}
+                  className="card hover-lift text-left"
+                >
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <p className="font-mono text-sm font-bold text-black">{o.orderNumber}</p>
+                    <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
+                      {relativeTime(o.updatedAt || o.createdAt)}
+                    </p>
+                  </div>
+                  <p className="text-xs text-black leading-relaxed">
+                    Moved to{' '}
+                    <span className="font-semibold text-[#FF5C00]">
+                      {formatOrderState(o.state)}
+                    </span>
+                  </p>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mt-2">
+                    {o.serviceLabel} · Qty {o.quantity}
+                  </p>
+                </button>
+              ))}
+            </div>
+          </div>
+        </ScrollReveal>
+      )}
+
+      {/* Profile card (Feature 1) */}
+      <ScrollReveal delay={0.08}>
+        {showProfileEdit ? (
+          <div className="card mb-10">
+            <div className="flex items-center gap-2 mb-5">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="#FF5C00" strokeWidth="1.6">
+                <circle cx="10" cy="7" r="3" />
+                <path d="M4 17c0-3 3-5 6-5s6 2 6 5" />
+              </svg>
+              <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                Edit your profile
+              </p>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] block mb-2">
+                  Name
+                </label>
+                <input
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  placeholder="Your name"
+                  className="form-input"
+                />
+              </div>
+              <div>
+                <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] block mb-2">
+                  Phone
+                </label>
+                <input
+                  value={editPhone}
+                  onChange={(e) => setEditPhone(e.target.value)}
+                  placeholder="+234…"
+                  className="form-input"
+                />
+              </div>
+              <div>
+                <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] block mb-2">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  className="form-input"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5 justify-end">
+              <button
+                onClick={() => {
+                  setShowProfileEdit(false);
+                  setProfileSaved(false);
+                }}
+                className="btn-outline"
+              >
+                Cancel
+              </button>
+              <button onClick={saveProfile} className="btn-primary">
+                {profileSaved ? '✓ Saved' : 'Save'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="card mb-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-full bg-[#FF5C00] text-white flex items-center justify-center font-bold text-lg shrink-0">
+                {(customer?.name?.charAt(0) || '?').toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-black truncate">
+                  {customer?.name || 'Paberin customer'}
+                </p>
+                <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                  {customer?.phone && (
+                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
+                      {customer.phone}
+                    </span>
+                  )}
+                  {customer?.email && (
+                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] truncate">
+                      {customer.email}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+            <button onClick={openProfileEdit} className="btn-outline self-start sm:self-auto">
+              Edit profile
+            </button>
+          </div>
+        )}
       </ScrollReveal>
 
       {/* Stats */}
@@ -323,9 +534,9 @@ function DashboardContent() {
           <div className="space-y-3">
             {filtered.map((order, i) => (
               <ScrollReveal key={order.orderNumber} delay={Math.min(i * 0.05, 0.3)}>
-                <button
+                <div
                   onClick={() => openDetail(order)}
-                  className="card hover-lift block group w-full text-left"
+                  className="card hover-lift block group w-full text-left cursor-pointer"
                 >
                   <div className="flex flex-col sm:flex-row sm:items-center gap-4 sm:gap-6">
                     {/* Order number + service */}
@@ -366,6 +577,18 @@ function DashboardContent() {
                       </p>
                     </div>
 
+                    {/* Reorder button (Feature 2) */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleReorder(order);
+                      }}
+                      className="btn-outline text-xs px-3 py-2 whitespace-nowrap"
+                      title="Place a new order with the same service & quantity"
+                    >
+                      ↻ Reorder
+                    </button>
+
                     {/* Arrow */}
                     <div className="hidden sm:flex items-center text-[#888888] group-hover:text-[#FF5C00] transition-colors">
                       <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -373,7 +596,7 @@ function DashboardContent() {
                       </svg>
                     </div>
                   </div>
-                </button>
+                </div>
               </ScrollReveal>
             ))}
           </div>
@@ -450,11 +673,21 @@ function DashboardContent() {
                         </p>
                       )}
                       {e.response && (
-                        <div className="mt-3 pt-3 border-t border-[#EAEAEA]">
-                          <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#888888] mb-1">
-                            response from team
-                          </p>
+                        <div className="mt-3 pt-3 border-t border-[#EAEAEA] bg-[#FFF7F0] -mx-5 -mb-5 px-5 pb-5 pt-3 rounded-b-lg">
+                          <div className="flex items-center gap-2 mb-2">
+                            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="#FF5C00" strokeWidth="1.6">
+                              <path d="M3 5h14v8H7l-4 3V5z" />
+                            </svg>
+                            <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#FF5C00] font-semibold">
+                              Team Response
+                            </p>
+                          </div>
                           <p className="text-xs text-black leading-relaxed">{e.response}</p>
+                          {e.updatedAt && (
+                            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mt-2">
+                              Responded {new Date(e.updatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                            </p>
+                          )}
                         </div>
                       )}
                     </div>
@@ -691,6 +924,12 @@ function DashboardContent() {
                     </div>
                   ) : (
                     <div className="mt-6 flex flex-wrap gap-2">
+                      <button
+                        onClick={() => handleReorder(detailOrder)}
+                        className="btn-primary"
+                      >
+                        Reorder
+                      </button>
                       <button
                         onClick={() => setShowEscalate(true)}
                         className="btn-outline border-[#FF5C00]/40 text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white"

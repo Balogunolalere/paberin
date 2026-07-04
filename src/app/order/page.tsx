@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { usePaberinAuth } from '@/lib/auth';
 import {
@@ -71,7 +71,7 @@ const STEPS = [
   { num: 5, label: 'Review & Pay' },
 ];
 
-export default function OrderPage() {
+function OrderPageInner() {
   const router = useRouter();
   const { customer } = usePaberinAuth();
   const [step, setStep] = useState<Step>(1);
@@ -98,6 +98,29 @@ export default function OrderPage() {
       }));
     }
   }, [customer]);
+
+  // Reorder prefill: when the dashboard sends ?service=…&qty=…, look up
+  // the matching service, apply it + the quantity, and jump straight to
+  // the Details step so the customer can review and submit quickly.
+  const searchParams = useSearchParams();
+  const reorderApplied = useRef(false);
+  useEffect(() => {
+    if (reorderApplied.current) return;
+    if (servicesLoading || services.length === 0) return;
+    const svc = searchParams.get('service');
+    const qty = searchParams.get('qty');
+    if (!svc) return;
+    const match = services.find((s) => s.type === svc);
+    if (!match) return;
+    reorderApplied.current = true;
+    setForm((prev) => ({
+      ...prev,
+      serviceType: match.type,
+      serviceName: match.label,
+      quantity: qty ? Math.max(1, parseInt(qty, 10) || 1) : prev.quantity,
+    }));
+    setStep(2);
+  }, [searchParams, servicesLoading, services]);
 
   // Fetch services on mount
   useEffect(() => {
@@ -950,5 +973,19 @@ export default function OrderPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function OrderPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="max-w-[87.5rem] mx-auto px-4 sm:px-6 md:px-10 py-24">
+          <div className="w-8 h-8 border-2 border-[#EAEAEA] border-t-[#FF5C00] rounded-full animate-spin" />
+        </div>
+      }
+    >
+      <OrderPageInner />
+    </Suspense>
   );
 }
