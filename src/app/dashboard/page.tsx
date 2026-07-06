@@ -1,8 +1,9 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { ScrollReveal } from '@/components/ScrollReveal';
+import { EscalationThread } from '@/components/EscalationThread';
 import { ProtectedRoute } from '@/lib/protected';
 import { usePaberinAuth } from '@/lib/auth';
 import {
@@ -34,6 +35,7 @@ const ESCALATION_STATUS_CLASS: Record<string, string> = {
   OPEN: 'bg-[#FF5C00]/10 text-[#FF5C00] border-[#FF5C00]/30',
   PENDING: 'bg-[#FF5C00]/10 text-[#FF5C00] border-[#FF5C00]/30',
   IN_REVIEW: 'bg-[#FF5C00]/10 text-[#FF5C00] border-[#FF5C00]/30',
+  RESPONDED: 'bg-[#FF5C00]/10 text-[#FF5C00] border-[#FF5C00]/30',
   RESOLVED: 'bg-[#F7F7F7] text-[#666666] border-[#EAEAEA]',
   CLOSED: 'bg-[#F7F7F7] text-[#666666] border-[#EAEAEA]',
   REJECTED: 'bg-[#FFF7F0] text-[#E05200] border-[#FFD9BF]',
@@ -54,6 +56,27 @@ function relativeTime(iso: string): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+/* ── Pretty-print a stored delivery address. Some legacy orders stored the
+   address as a JSON blob (e.g. {"line1":"…","city":"…"}); if we detect
+   JSON we collapse the values into a readable single-line string. ── */
+function prettyAddress(raw: string | null | undefined): string {
+  if (!raw) return '';
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean).join(', ');
+      if (parsed && typeof parsed === 'object') {
+        const parts = Object.values(parsed).filter((v) => typeof v === 'string' && v.trim());
+        if (parts.length) return parts.join(', ');
+      }
+    } catch {
+      // not real JSON — fall through to the raw string
+    }
+  }
+  return trimmed;
 }
 
 function StatCard({ label, value }: { label: string; value: string | number }) {
@@ -86,12 +109,35 @@ function DashboardContent() {
   const [escalateMessage, setEscalateMessage] = useState('');
   const [escalateSubmitting, setEscalateSubmitting] = useState(false);
   const [escalateError, setEscalateError] = useState<string | null>(null);
-  const [escalateSuccess, setEscalateSuccess] = useState<string | null>(null);
 
   /* ── Escalations list state ── */
   const [escalations, setEscalations] = useState<Escalation[]>([]);
   const [escalationsLoading, setEscalationsLoading] = useState(false);
   const [escalationsError, setEscalationsError] = useState<string | null>(null);
+
+  /* ── Escalation thread dialog (chat) ── */
+  const [threadEscalation, setThreadEscalation] = useState<Escalation | null>(null);
+
+  /* ── Order modify form (24h grace) ── */
+  const [showModify, setShowModify] = useState(false);
+  const [modifyQty, setModifyQty] = useState(1);
+  const [modifyAddress, setModifyAddress] = useState('');
+  const [modifySubmitting, setModifySubmitting] = useState(false);
+  const [modifyError, setModifyError] = useState<string | null>(null);
+  const [modifySuccess, setModifySuccess] = useState<string | null>(null);
+
+  /* ── Order cancel form (24h grace) ── */
+  const [showCancel, setShowCancel] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelSubmitting, setCancelSubmitting] = useState(false);
+  const [cancelError, setCancelError] = useState<string | null>(null);
+
+  /* ── Email-me-updates preferences ── */
+  const [emailNotifications, setEmailNotifications] = useState(false);
+  const [prefEmail, setPrefEmail] = useState<string | null>(null);
+  const [emailPrefSaving, setEmailPrefSaving] = useState(false);
+  const [emailPrefError, setEmailPrefError] = useState<string | null>(null);
+  const [emailPrefSaved, setEmailPrefSaved] = useState(false);
 
   /* ── Profile edit state (Feature 1) ── */
   const [showProfileEdit, setShowProfileEdit] = useState(false);
@@ -139,24 +185,98 @@ function DashboardContent() {
     }
   }, [customer?.phone]);
 
+  /* ── Email-me-updates preferences (Feature 7) ── */
+  const loadEmailPreferences = useCallback(async () => {
+    if (!customer?.phone) return;
+    try {
+      const prefs = await api.getPreferences(customer.phone);
+      setEmailNotifications(!!prefs?.emailNotifications);
+      setPrefEmail(prefs?.customerEmail || null);
+    } catch {
+      // Endpoint may not be live yet — fall back to defaults silently.
+    }
+  }, [customer?.phone]);
+
+  const handleToggleEmailPref = useCallback(
+    async (next: boolean) => {
+      if (!customer?.phone || emailPrefSaving) return;
+      const prev = emailNotifications;
+      setEmailNotifications(next);
+      setEmailPrefError(null);
+      setEmailPrefSaving(true);
+      try {
+        await api.updatePreferences({
+          customerPhone: customer.phone,
+          emailNotifications: next,
+          customerEmail: prefEmail || editEmail || customer.email || undefined,
+          customerName: customer.name || undefined,
+        });
+        setEmailPrefSaved(true);
+        setTimeout(() => setEmailPrefSaved(false), 1500);
+      } catch (err: any) {
+        setEmailNotifications(prev); // revert on failure
+        setEmailPrefError(err?.message || 'Could not update preferences. Try again.');
+      } finally {
+        setEmailPrefSaving(false);
+      }
+    },
+    [customer?.phone, customer?.email, customer?.name, emailNotifications, emailPrefSaving, prefEmail, editEmail]
+  );
+
   useEffect(() => {
     loadOrders();
     loadEscalations();
-  }, [loadOrders, loadEscalations]);
+    loadEmailPreferences();
+  }, [loadOrders, loadEscalations, loadEmailPreferences]);
+
+  /* ── Escalation badge set: orderNumbers with an OPEN/RESPONDED ticket ── */
+  const escalatedOrderNumbers = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of escalations) {
+      const status = (e.status || '').toUpperCase();
+      if ((status === 'OPEN' || status === 'RESPONDED') && e.orderNumber) {
+        set.add(e.orderNumber);
+      }
+    }
+    return set;
+  }, [escalations]);
+
+  /* ── Open the escalation thread dialog for a given ticket ── */
+  const openEscalationThread = (e: Escalation) => {
+    setThreadEscalation(e);
+  };
+
+  const closeEscalationThread = () => {
+    setThreadEscalation(null);
+  };
+
+  const resetDetailForms = () => {
+    setShowEscalate(false);
+    setEscalateError(null);
+    setEscalateMessage('');
+    setEscalateReason('Quality issue');
+    setShowModify(false);
+    setModifyError(null);
+    setModifySuccess(null);
+    setModifyQty(1);
+    setModifyAddress('');
+    setShowCancel(false);
+    setCancelError(null);
+    setCancelReason('');
+  };
 
   const openDetail = async (o: Order) => {
     setDetailOrder(o);
     setDetailData(null);
     setDetailError(null);
-    setShowEscalate(false);
-    setEscalateError(null);
-    setEscalateSuccess(null);
-    setEscalateMessage('');
-    setEscalateReason('Quality issue');
+    resetDetailForms();
     setDetailLoading(true);
     try {
       const data = await api.trackOrder(o.orderNumber);
       setDetailData(data);
+      // Prefill the modify form with the canonical detail values.
+      setModifyQty(data?.quantity ?? o.quantity ?? 1);
+      setModifyAddress(prettyAddress(data?.deliveryAddress ?? o.deliveryAddress));
     } catch (err: any) {
       setDetailError(err?.message || 'Could not load order details.');
     } finally {
@@ -168,14 +288,69 @@ function DashboardContent() {
     setDetailOrder(null);
     setDetailData(null);
     setDetailError(null);
-    setShowEscalate(false);
-    setEscalateError(null);
-    setEscalateSuccess(null);
+    resetDetailForms();
+  };
+
+  /* ── Submit a modification (quantity + delivery address) within 24h grace ── */
+  const submitModify = async () => {
+    if (!detailOrder || !customer?.phone) return;
+    if (modifyQty < 1) {
+      setModifyError('Quantity must be at least 1.');
+      return;
+    }
+    setModifySubmitting(true);
+    setModifyError(null);
+    setModifySuccess(null);
+    try {
+      const res = await api.modifyOrder(detailOrder.orderNumber, customer.phone, {
+        quantity: modifyQty,
+        deliveryAddress: modifyAddress.trim() || undefined,
+      });
+      const newTotal = (res as any)?.totalAmount;
+      setModifySuccess(
+        typeof newTotal === 'number'
+          ? `Order updated. New total: ${formatNaira(newTotal)}.`
+          : 'Order updated successfully.'
+      );
+      // Refresh the order detail + orders list so the displayed total stays in sync.
+      try {
+        const fresh = await api.trackOrder(detailOrder.orderNumber);
+        setDetailData(fresh);
+        setModifyQty(fresh?.quantity ?? modifyQty);
+        setModifyAddress(prettyAddress(fresh?.deliveryAddress));
+      } catch {
+        // non-fatal — the success banner already shows the new total.
+      }
+      loadOrders();
+    } catch (err: any) {
+      setModifyError(err?.message || 'Could not modify the order. Please try again.');
+    } finally {
+      setModifySubmitting(false);
+    }
+  };
+
+  /* ── Cancel the order within 24h grace ── */
+  const submitCancel = async () => {
+    if (!detailOrder || !customer?.phone) return;
+    setCancelSubmitting(true);
+    setCancelError(null);
+    try {
+      await api.cancelOrder(detailOrder.orderNumber, customer.phone, cancelReason.trim() || undefined);
+      closeDetail();
+      loadOrders();
+      loadEscalations();
+    } catch (err: any) {
+      setCancelError(err?.message || 'Could not cancel the order. Please try again.');
+    } finally {
+      setCancelSubmitting(false);
+    }
   };
 
   const submitEscalation = async () => {
     if (!detailOrder || !customer?.phone) return;
-    if (!escalateMessage.trim()) {
+    const reason = escalateReason;
+    const message = escalateMessage.trim();
+    if (!message) {
       setEscalateError('Please describe the issue in the message field.');
       return;
     }
@@ -186,15 +361,30 @@ function DashboardContent() {
         orderNumber: detailOrder.orderNumber,
         customerPhone: customer.phone,
         customerName: detailOrder.customerName || customer.name,
-        reason: escalateReason,
-        message: escalateMessage.trim(),
+        reason,
+        message,
       });
-      const ticket = (res as any)?.ticketId || (res as any)?.id || '—';
-      setEscalateSuccess(ticket);
+      const ticket = (res as any)?.ticketId || (res as any)?.id || '';
       setShowEscalate(false);
       setEscalateMessage('');
-      // Refresh escalations list
-      loadEscalations();
+      // Refresh the escalations list, then auto-open the new ticket's
+      // thread so the customer can continue the conversation immediately.
+      await loadEscalations();
+      closeDetail();
+      if (ticket) {
+        setThreadEscalation({
+          id: ticket,
+          ticketId: ticket,
+          orderNumber: detailOrder.orderNumber,
+          customerPhone: customer.phone,
+          customerName: detailOrder.customerName || customer.name,
+          reason,
+          message,
+          status: 'OPEN',
+          response: null,
+          createdAt: new Date().toISOString(),
+        } as Escalation);
+      }
     } catch (err: any) {
       setEscalateError(err?.message || 'Failed to submit escalation. Please try again.');
     } finally {
@@ -225,7 +415,7 @@ function DashboardContent() {
   });
 
   const totalSpent = orders
-    .filter((o) => completedStates.includes(o.state) || o.state === 'OUT_FOR_DELIVERY' || o.state === 'DISPATCHED')
+    .filter((o) => o.state !== 'CANCELLED' && o.state !== 'REFUNDED')
     .reduce((sum, o) => sum + (o.totalAmount || 0), 0);
   const activeCount = orders.filter((o) => activeStates.includes(o.state)).length;
 
@@ -409,32 +599,75 @@ function DashboardContent() {
             </div>
           </div>
         ) : (
-          <div className="card mb-10 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-full bg-[#FF5C00] text-white flex items-center justify-center font-bold text-lg shrink-0">
-                {(customer?.name?.charAt(0) || '?').toUpperCase()}
+          <div className="card mb-10">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div className="flex items-center gap-4">
+                <div className="w-12 h-12 rounded-full bg-[#FF5C00] text-white flex items-center justify-center font-bold text-lg shrink-0">
+                  {(customer?.name?.charAt(0) || '?').toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-black truncate">
+                    {customer?.name || 'Paberin customer'}
+                  </p>
+                  <div className="flex items-center gap-3 mt-0.5 flex-wrap">
+                    {customer?.phone && (
+                      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
+                        {customer.phone}
+                      </span>
+                    )}
+                    {customer?.email && (
+                      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] truncate">
+                        {customer.email}
+                      </span>
+                    )}
+                  </div>
+                </div>
               </div>
+              <button onClick={openProfileEdit} className="btn-outline self-start sm:self-auto">
+                Edit profile
+              </button>
+            </div>
+
+            {/* Email-me-updates toggle (Feature 7) */}
+            <div className="mt-5 pt-5 border-t border-[#EAEAEA] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold text-black truncate">
-                  {customer?.name || 'Paberin customer'}
-                </p>
-                <div className="flex items-center gap-3 mt-0.5 flex-wrap">
-                  {customer?.phone && (
-                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
-                      {customer.phone}
-                    </span>
-                  )}
-                  {customer?.email && (
-                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] truncate">
-                      {customer.email}
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-semibold text-black">Email me order updates</p>
+                  {emailPrefSaved && (
+                    <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#16A34A]">
+                      ✓ Saved
                     </span>
                   )}
                 </div>
+                <p className="text-xs text-[#666666] mt-1 leading-relaxed">
+                  {emailNotifications
+                    ? prefEmail
+                      ? `Order updates are sent to ${prefEmail}.`
+                      : 'Add an email to your profile to receive order updates.'
+                    : 'Turn on to receive order status updates by email.'}
+                </p>
+                {emailPrefError && (
+                  <p className="text-xs text-[#E05200] mt-1">{emailPrefError}</p>
+                )}
               </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={emailNotifications}
+                aria-label="Email me order updates"
+                disabled={emailPrefSaving}
+                onClick={() => handleToggleEmailPref(!emailNotifications)}
+                className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                  emailNotifications ? 'bg-[#FF5C00]' : 'bg-[#D4D4D4]'
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    emailNotifications ? 'translate-x-6' : 'translate-x-1'
+                  }`}
+                />
+              </button>
             </div>
-            <button onClick={openProfileEdit} className="btn-outline self-start sm:self-auto">
-              Edit profile
-            </button>
           </div>
         )}
       </ScrollReveal>
@@ -445,6 +678,51 @@ function DashboardContent() {
           <StatCard label="Total Orders" value={orders.length} />
           <StatCard label="Active Jobs" value={activeCount} />
           <StatCard label="Lifetime Spend" value={formatNaira(totalSpent)} />
+        </div>
+      </ScrollReveal>
+
+      {/* Manage: address book + saved designs (Feature 8) */}
+      <ScrollReveal delay={0.12}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-12">
+          <Link href="/dashboard/addresses" className="card hover-lift group">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-lg bg-[#FF5C00]/10 flex items-center justify-center shrink-0">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#FF5C00" strokeWidth="1.6">
+                  <path d="M10 2C6.5 2 4 4.5 4 7.5c0 4 6 10.5 6 10.5s6-6.5 6-10.5C16 4.5 13.5 2 10 2z" />
+                  <circle cx="10" cy="7.5" r="2" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#888888] mb-1">
+                  Address book
+                </p>
+                <p className="text-base font-bold text-black mb-1">Delivery addresses</p>
+                <p className="text-xs text-[#666666]">
+                  Save and reuse addresses for faster checkout.
+                </p>
+              </div>
+            </div>
+          </Link>
+          <Link href="/dashboard/designs" className="card hover-lift group">
+            <div className="flex items-start gap-4">
+              <div className="w-10 h-10 rounded-lg bg-[#FF5C00]/10 flex items-center justify-center shrink-0">
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#FF5C00" strokeWidth="1.6">
+                  <path d="M3 5h14v10H3z" />
+                  <path d="M3 13l4-4 4 4 3-3 3 3" />
+                  <circle cx="7" cy="8" r="1" />
+                </svg>
+              </div>
+              <div className="min-w-0">
+                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#888888] mb-1">
+                  Your library
+                </p>
+                <p className="text-base font-bold text-black mb-1">Saved designs</p>
+                <p className="text-xs text-[#666666]">
+                  Re-order from a past design file or save a new one.
+                </p>
+              </div>
+            </div>
+          </Link>
         </div>
       </ScrollReveal>
 
@@ -551,6 +829,12 @@ function DashboardContent() {
                           <span className="w-1 h-1 rounded-full bg-current" />
                           {formatOrderState(order.state)}
                         </span>
+                        {escalatedOrderNumbers.has(order.orderNumber) && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-medium bg-[#DC2626]/10 text-[#DC2626] border-[#DC2626]/30">
+                            <span className="w-1 h-1 rounded-full bg-current" />
+                            Escalated
+                          </span>
+                        )}
                       </div>
                       <p className="text-sm text-[#666666] truncate">
                         {order.serviceLabel} · Qty {order.quantity}
@@ -639,13 +923,27 @@ function DashboardContent() {
               const statusKey = (e.status || 'open').toUpperCase();
               const statusClass =
                 ESCALATION_STATUS_CLASS[statusKey] || 'bg-[#F7F7F7] text-[#666666] border-[#EAEAEA]';
+              const isResolved = statusKey === 'RESOLVED' || statusKey === 'CLOSED';
+              const ticketKey = e.ticketId || e.id;
               return (
-                <div key={e.id || e.ticketId} className="card">
+                <div
+                  key={e.id || e.ticketId}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openEscalationThread(e)}
+                  onKeyDown={(ev) => {
+                    if (ev.key === 'Enter' || ev.key === ' ') {
+                      ev.preventDefault();
+                      openEscalationThread(e);
+                    }
+                  }}
+                  className="card hover-lift cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-[#FF5C00] focus-visible:ring-offset-2"
+                >
                   <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-3 flex-wrap mb-1">
                         <p className="font-mono text-sm font-bold text-black">
-                          {e.ticketId || e.id}
+                          {ticketKey}
                         </p>
                         {e.orderNumber && (
                           <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#888888]">
@@ -666,13 +964,14 @@ function DashboardContent() {
                         {e.reason}
                       </p>
                       {e.message && (
-                        <p className="text-xs text-[#666666] mt-1.5 leading-relaxed">
+                        <p className="text-xs text-[#666666] mt-1.5 leading-relaxed line-clamp-2">
                           {e.message}
                         </p>
                       )}
+                      {/* Clean preview of the latest team response (no negative-margin bleed) */}
                       {e.response && (
-                        <div className="mt-3 pt-3 border-t border-[#EAEAEA] bg-[#FFF7F0] -mx-5 -mb-5 px-5 pb-5 pt-3 rounded-b-lg">
-                          <div className="flex items-center gap-2 mb-2">
+                        <div className="mt-3 pt-3 border-t border-[#EAEAEA]">
+                          <div className="flex items-center gap-2 mb-1.5">
                             <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="#FF5C00" strokeWidth="1.6">
                               <path d="M3 5h14v8H7l-4 3V5z" />
                             </svg>
@@ -680,20 +979,24 @@ function DashboardContent() {
                               Team Response
                             </p>
                           </div>
-                          <p className="text-xs text-black leading-relaxed">{e.response}</p>
-                          {e.updatedAt && (
-                            <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mt-2">
-                              Responded {new Date(e.updatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                            </p>
-                          )}
+                          <p className="text-xs text-black leading-relaxed line-clamp-2">{e.response}</p>
                         </div>
                       )}
+                      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#FF5C00] mt-3">
+                        Open thread →
+                        {typeof e.messageCount === 'number' ? `  ·  ${e.messageCount} message${e.messageCount === 1 ? '' : 's'}` : ''}
+                      </p>
                     </div>
                     <div className="text-left sm:text-right shrink-0">
                       <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-0.5">
                         opened
                       </p>
                       <p className="text-xs text-black">{formatDate(e.createdAt)}</p>
+                      {isResolved && (
+                        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#16A34A] mt-2">
+                          Resolved
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -781,19 +1084,19 @@ function DashboardContent() {
                       }
                     />
                     {detailData?.deliveryAddress && (
-                      <DetailItem k="Address" v={detailData.deliveryAddress} />
+                      <DetailItem k="Address" v={prettyAddress(detailData.deliveryAddress)} />
                     )}
                     {detailData?.trackingPin && (
                       <DetailItem k="Tracking PIN" v={detailData.trackingPin} />
                     )}
                   </div>
 
-                  {/* Timeline */}
-                  {detailData?.timeline && detailData.timeline.length > 0 && (
-                    <div className="mt-6">
-                      <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-4">
-                        Status Timeline
-                      </p>
+                  {/* Status Timeline (always rendered; empty-state aware) */}
+                  <div className="mt-6">
+                    <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-4">
+                      Status Timeline
+                    </p>
+                    {detailData?.timeline && detailData.timeline.length > 0 ? (
                       <ol className="space-y-3">
                         {detailData.timeline.map((t, i) => (
                           <li key={i} className="flex gap-3 items-start">
@@ -810,9 +1113,16 @@ function DashboardContent() {
                               )}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-black">
-                                {formatOrderState(t.state)}
-                              </p>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <p className="text-sm font-medium text-black">
+                                  {formatOrderState(t.state)}
+                                </p>
+                                {t.changedBy && (
+                                  <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
+                                    by {t.changedBy}
+                                  </span>
+                                )}
+                              </div>
                               <p className="font-mono text-[10px] text-[#888888] mt-0.5">
                                 {new Date(t.timestamp).toLocaleString('en-US', {
                                   month: 'short',
@@ -829,30 +1139,123 @@ function DashboardContent() {
                           </li>
                         ))}
                       </ol>
-                    </div>
-                  )}
+                    ) : (
+                      <p className="text-xs text-[#888888] italic">No history yet.</p>
+                    )}
+                  </div>
 
-                  {/* Escalate success message */}
-                  {escalateSuccess ? (
-                    <div className="mt-6 border border-[#FF5C00]/30 bg-[#FFF7F0] rounded-lg p-5 text-center">
-                      <div className="w-10 h-10 mx-auto rounded-full bg-[#FF5C00]/10 flex items-center justify-center mb-3">
-                        <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#FF5C00" strokeWidth="2">
-                          <path d="M5 10l3 3 7-7" />
-                        </svg>
-                      </div>
-                      <p className="text-sm font-bold text-black mb-1">Escalation submitted</p>
-                      <p className="text-xs text-[#666666]">
-                        Ticket <span className="font-mono text-[#FF5C00] font-bold">{escalateSuccess}</span> — our team will review and respond within 24 hours.
+                  {/* Grace-period modify form (24h) */}
+                  {showModify ? (
+                    <div className="mt-6 bg-[#F7F7F7] border border-[#EAEAEA] rounded-lg p-5">
+                      <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-4">
+                        Modify this order
                       </p>
-                      <button
-                        onClick={() => {
-                          setEscalateSuccess(null);
-                          closeDetail();
-                        }}
-                        className="btn-outline mt-4"
-                      >
-                        Done
-                      </button>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] block mb-2">
+                            Quantity
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            value={modifyQty}
+                            onChange={(e) => setModifyQty(Math.max(1, Number(e.target.value) || 1))}
+                            className="form-input"
+                          />
+                        </div>
+                        <div>
+                          <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] block mb-2">
+                            Delivery address
+                          </label>
+                          <textarea
+                            value={modifyAddress}
+                            onChange={(e) => setModifyAddress(e.target.value)}
+                            rows={3}
+                            placeholder="Delivery address"
+                            className="form-input resize-none"
+                          />
+                        </div>
+                        {modifyError && (
+                          <div className="border border-[#FF5C00]/30 bg-[#FF5C00]/5 px-3 py-2 rounded text-sm text-[#E05200]">
+                            {modifyError}
+                          </div>
+                        )}
+                        {modifySuccess && (
+                          <div className="border border-[#16A34A]/30 bg-[#16A34A]/5 px-3 py-2 rounded text-sm text-[#166534]">
+                            {modifySuccess}
+                          </div>
+                        )}
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => {
+                              setShowModify(false);
+                              setModifyError(null);
+                              setModifySuccess(null);
+                            }}
+                            disabled={modifySubmitting}
+                            className="btn-outline disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={submitModify}
+                            disabled={modifySubmitting}
+                            className="btn-primary disabled:opacity-60"
+                          >
+                            {modifySubmitting ? 'Saving…' : 'Save changes'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : showCancel ? (
+                    /* Grace-period cancel form (24h) */
+                    <div className="mt-6 bg-[#FEF2F2] border border-[#DC2626]/30 rounded-lg p-5">
+                      <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#DC2626] mb-4">
+                        Cancel this order
+                      </p>
+                      <p className="text-xs text-[#666666] mb-4 leading-relaxed">
+                        This will cancel the order and start a refund if payment was made. This action cannot be undone.
+                      </p>
+                      <div className="space-y-4">
+                        <div>
+                          <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] block mb-2">
+                            Reason (optional)
+                          </label>
+                          <textarea
+                            value={cancelReason}
+                            onChange={(e) => setCancelReason(e.target.value)}
+                            rows={2}
+                            placeholder="Tell us why you're cancelling — helps us improve."
+                            className="form-input resize-none"
+                          />
+                        </div>
+                        {cancelError && (
+                          <div className="border border-[#DC2626]/30 bg-[#DC2626]/5 px-3 py-2 rounded text-sm text-[#DC2626]">
+                            {cancelError}
+                          </div>
+                        )}
+                        <div className="flex gap-2 justify-end">
+                          <button
+                            onClick={() => {
+                              setShowCancel(false);
+                              setCancelError(null);
+                              setCancelReason('');
+                            }}
+                            disabled={cancelSubmitting}
+                            className="btn-outline disabled:opacity-50"
+                          >
+                            Keep order
+                          </button>
+                          <button
+                            onClick={submitCancel}
+                            disabled={cancelSubmitting}
+                            className="btn-primary disabled:opacity-60"
+                            style={{ backgroundColor: '#DC2626', borderColor: '#DC2626' }}
+                          >
+                            {cancelSubmitting ? 'Cancelling…' : 'Confirm cancellation'}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   ) : showEscalate ? (
                     /* Escalate form */
@@ -921,25 +1324,59 @@ function DashboardContent() {
                       </div>
                     </div>
                   ) : (
-                    <div className="mt-6 flex flex-wrap gap-2">
-                      <button
-                        onClick={() => handleReorder(detailOrder)}
-                        className="btn-primary"
-                      >
-                        Reorder
-                      </button>
-                      <button
-                        onClick={() => setShowEscalate(true)}
-                        className="btn-outline border-[#FF5C00]/40 text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white"
-                      >
-                        Escalate this order
-                      </button>
-                      <Link
-                        href={`/track?id=${encodeURIComponent(detailOrder.orderNumber)}`}
-                        className="btn-outline"
-                      >
-                        Full tracking page →
-                      </Link>
+                    <div className="mt-6 space-y-3">
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={() => handleReorder(detailOrder)}
+                          className="btn-primary"
+                        >
+                          Reorder
+                        </button>
+                        {detailData?.canModify && (
+                          <button
+                            onClick={() => {
+                              setModifyQty(detailData?.quantity ?? detailOrder.quantity ?? 1);
+                              setModifyAddress(prettyAddress(detailData?.deliveryAddress ?? detailOrder.deliveryAddress));
+                              setModifyError(null);
+                              setModifySuccess(null);
+                              setShowModify(true);
+                            }}
+                            className="btn-outline"
+                          >
+                            Modify order
+                          </button>
+                        )}
+                        {detailData?.canCancel && (
+                          <button
+                            onClick={() => {
+                              setCancelError(null);
+                              setCancelReason('');
+                              setShowCancel(true);
+                            }}
+                            className="btn-outline"
+                            style={{ color: '#DC2626', borderColor: 'rgba(220,38,38,0.6)' }}
+                          >
+                            Cancel order
+                          </button>
+                        )}
+                        <button
+                          onClick={() => setShowEscalate(true)}
+                          className="btn-outline border-[#FF5C00]/40 text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white"
+                        >
+                          Escalate this order
+                        </button>
+                        <Link
+                          href={`/track?id=${encodeURIComponent(detailOrder.orderNumber)}`}
+                          className="btn-outline"
+                        >
+                          Full tracking page →
+                        </Link>
+                      </div>
+                      {!detailData?.canCancel && !detailData?.canModify && (
+                        <p className="text-xs text-[#888888] italic">
+                          Modifications allowed within 24 hours of placing the order.
+                        </p>
+                      )}
                     </div>
                   )}
                 </>
@@ -953,6 +1390,66 @@ function DashboardContent() {
               </p>
               <button
                 onClick={closeDetail}
+                className="text-sm text-[#666666] hover:text-black transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Escalation thread dialog (chat) ── */}
+      {threadEscalation && customer?.phone && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/50 flex items-start sm:items-center justify-center p-3 sm:p-6 overflow-y-auto"
+          onClick={closeEscalationThread}
+        >
+          <div
+            className="bg-white border border-[#EAEAEA] w-full max-w-2xl my-4 sm:my-0 relative rounded-lg shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Thread header */}
+            <div className="flex items-start justify-between p-5 sm:p-6 border-b border-[#EAEAEA]">
+              <div className="min-w-0">
+                <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-2">
+                  Escalation thread
+                </p>
+                <p className="font-mono text-xl font-bold text-[#FF5C00] truncate">
+                  {threadEscalation.ticketId || threadEscalation.id}
+                </p>
+                {threadEscalation.orderNumber && (
+                  <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#888888] mt-1">
+                    order · {threadEscalation.orderNumber}
+                  </p>
+                )}
+              </div>
+              <button
+                onClick={closeEscalationThread}
+                className="text-[#888888] hover:text-black transition-colors p-1 -m-1"
+                aria-label="Close"
+              >
+                <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M5 5l10 10M15 5L5 15" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Thread body */}
+            <EscalationThread
+              ticketId={threadEscalation.ticketId || threadEscalation.id || ''}
+              phone={customer.phone}
+              customerName={customer.name}
+              onResolved={() => loadEscalations()}
+            />
+
+            {/* Thread footer */}
+            <div className="border-t border-[#EAEAEA] p-4 sm:p-5 flex items-center justify-between gap-3 bg-[#F7F7F7] rounded-b-lg">
+              <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
+                Opened {formatDate(threadEscalation.createdAt)}
+              </p>
+              <button
+                onClick={closeEscalationThread}
                 className="text-sm text-[#666666] hover:text-black transition-colors"
               >
                 Close

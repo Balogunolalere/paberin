@@ -83,3 +83,4 @@ Thumbs.db
 
 # pnpm store
 .pnpm-store
+package-lock.json

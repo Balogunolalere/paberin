@@ -149,6 +149,17 @@ export interface Escalation {
   response?: string | null;
   createdAt: string;
   updatedAt?: string;
+  messageCount?: number;
+  lastAdminMessageAt?: string | null;
+  messages?: EscalationMessage[];
+}
+
+export interface EscalationMessage {
+  id: string;
+  role: 'CUSTOMER' | 'ADMIN' | 'SYSTEM';
+  body: string;
+  authorName?: string | null;
+  createdAt: string;
 }
 
 export interface CreateEscalationBody {
@@ -164,6 +175,71 @@ export interface CreateEscalationResponse {
   ticketId: string;
   status: string;
   createdAt: string;
+}
+
+export interface EscalationThread {
+  ticketId: string;
+  orderNumber: string | null;
+  status: string;
+  messages: EscalationMessage[];
+}
+
+export interface SavedAddress {
+  id: string;
+  customerPhone: string;
+  label: string;
+  recipientName?: string | null;
+  phone?: string | null;
+  address: string;
+  city?: string | null;
+  state?: string | null;
+  landmark?: string | null;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface SavedDesign {
+  id: string;
+  customerPhone: string;
+  name: string;
+  fileUrl: string;
+  filePublicId?: string | null;
+  serviceType?: string | null;
+  notes?: string | null;
+  createdAt: string;
+}
+
+export interface CustomerNotification {
+  id: string;
+  customerPhone: string;
+  type: string;
+  title: string;
+  body: string;
+  orderNumber?: string | null;
+  isRead: boolean;
+  createdAt: string;
+}
+
+export interface CustomerNotificationsResponse {
+  notifications: CustomerNotification[];
+  unreadCount: number;
+}
+
+export interface CustomerPreference {
+  id: string;
+  customerPhone: string;
+  customerName?: string | null;
+  customerEmail?: string | null;
+  emailNotifications: boolean;
+}
+
+export interface FAQItem {
+  id: string;
+  category: string;
+  question: string;
+  answer: string;
+  brand?: string | null;
 }
 
 export interface ChatMessage {
@@ -249,7 +325,112 @@ export const api = {
 
   /** List a customer's escalations by phone. */
   getEscalations: (phone: string) =>
-    apiFetch<Escalation[]>(`/api/escalations?phone=${encodeURIComponent(phone)}`),
+    apiFetch<{ escalations: Escalation[] }>(`/api/escalations?phone=${encodeURIComponent(phone)}`),
+
+  /** Fetch the full message thread for a single escalation. */
+  getEscalationThread: (ticketId: string, phone: string) =>
+    apiFetch<EscalationThread>(
+      `/api/escalations/${encodeURIComponent(ticketId)}/messages?phone=${encodeURIComponent(phone)}`
+    ),
+
+  /** Customer appends a message to an escalation thread. */
+  replyEscalation: (ticketId: string, body: { phone: string; message: string; customerName?: string }) =>
+    apiFetch<{ message: EscalationMessage }>(
+      `/api/escalations/${encodeURIComponent(ticketId)}/messages`,
+      { method: 'POST', body: JSON.stringify(body) }
+    ),
+
+  /** Cancel an order within the 24h grace period. */
+  cancelOrder: (orderNumber: string, customerPhone: string, reason?: string) =>
+    apiFetch<{ orderNumber: string; state: string; message: string }>(
+      `/api/orders/${encodeURIComponent(orderNumber)}`,
+      { method: 'PATCH', body: JSON.stringify({ action: 'cancel', customerPhone, reason }) }
+    ),
+
+  /** Modify an order (quantity and/or delivery address) within the 24h grace period. */
+  modifyOrder: (
+    orderNumber: string,
+    customerPhone: string,
+    changes: { quantity?: number; deliveryAddress?: string }
+  ) =>
+    apiFetch<{ orderNumber: string; quantity: number; totalAmount: number; deliveryAddress: string | null; message: string }>(
+      `/api/orders/${encodeURIComponent(orderNumber)}`,
+      { method: 'PATCH', body: JSON.stringify({ action: 'modify', customerPhone, ...changes }) }
+    ),
+
+  /** List saved delivery addresses. */
+  getSavedAddresses: (phone: string) =>
+    apiFetch<{ addresses: SavedAddress[] }>(`/api/saved-addresses?phone=${encodeURIComponent(phone)}`),
+
+  /** Save a new delivery address. */
+  createSavedAddress: (body: Omit<SavedAddress, 'id' | 'createdAt' | 'updatedAt'>) =>
+    apiFetch<SavedAddress>('/api/saved-addresses', { method: 'POST', body: JSON.stringify(body) }),
+
+  /** Update a saved address. */
+  updateSavedAddress: (id: string, phone: string, patch: Partial<SavedAddress>) =>
+    apiFetch<SavedAddress>(`/api/saved-addresses/${encodeURIComponent(id)}?phone=${encodeURIComponent(phone)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...patch, customerPhone: phone }),
+    }),
+
+  /** Delete a saved address. */
+  deleteSavedAddress: (id: string, phone: string) =>
+    apiFetch<{ message: string }>(`/api/saved-addresses/${encodeURIComponent(id)}?phone=${encodeURIComponent(phone)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ customerPhone: phone }),
+    }),
+
+  /** List saved designs. */
+  getSavedDesigns: (phone: string) =>
+    apiFetch<{ designs: SavedDesign[] }>(`/api/saved-designs?phone=${encodeURIComponent(phone)}`),
+
+  /** Save a design (by URL or copied from an order's design file). */
+  createSavedDesign: (body: {
+    customerPhone: string;
+    name: string;
+    fileUrl?: string;
+    fromOrderNumber?: string;
+    serviceType?: string;
+    notes?: string;
+  }) => apiFetch<SavedDesign>('/api/saved-designs', { method: 'POST', body: JSON.stringify(body) }),
+
+  /** Delete a saved design. */
+  deleteSavedDesign: (id: string, phone: string) =>
+    apiFetch<{ message: string }>(`/api/saved-designs/${encodeURIComponent(id)}?phone=${encodeURIComponent(phone)}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ customerPhone: phone }),
+    }),
+
+  /** List in-app notifications + unread count. */
+  getNotifications: (phone: string) =>
+    apiFetch<CustomerNotificationsResponse>(`/api/customer/notifications?phone=${encodeURIComponent(phone)}`),
+
+  /** Mark all notifications as read. */
+  markAllNotificationsRead: (phone: string) =>
+    apiFetch<{ message: string }>(`/api/customer/notifications?phone=${encodeURIComponent(phone)}`, { method: 'POST', body: JSON.stringify({ markAllRead: true }) }),
+
+  /** Mark a single notification as read. */
+  markNotificationRead: (id: string, phone: string) =>
+    apiFetch<{ message: string }>(
+      `/api/customer/notifications/${encodeURIComponent(id)}/read?phone=${encodeURIComponent(phone)}`,
+      { method: 'POST' }
+    ),
+
+  /** Get customer preferences (creates defaults if absent). */
+  getPreferences: (phone: string) =>
+    apiFetch<CustomerPreference>(`/api/customer/preferences?phone=${encodeURIComponent(phone)}`),
+
+  /** Update customer preferences. */
+  updatePreferences: (body: {
+    customerPhone: string;
+    customerName?: string;
+    customerEmail?: string;
+    emailNotifications?: boolean;
+  }) => apiFetch<CustomerPreference>('/api/customer/preferences', { method: 'PUT', body: JSON.stringify(body) }),
+
+  /** Public FAQ list (active only). */
+  getFAQ: (brand?: 'skyal' | 'paberin') =>
+    apiFetch<{ faqs: FAQItem[] }>(`/api/faq${brand ? `?brand=${brand.toUpperCase()}` : ''}`),
 
   /** Submit the contact form. */
   submitContact: (body: {

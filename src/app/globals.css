@@ -60,17 +60,6 @@
   button:focus-visible, a:focus-visible {
     box-shadow: 0 0 0 2px var(--bg-color), 0 0 0 4px var(--accent-color);
   }
-
-  /* ──── Custom cursor: only hide native cursor when the custom one is
-       actually active (mouse pointer, no reduced-motion). The class is
-       toggled from CustomCursor.tsx so SSR / touch / a11y users keep the
-       native cursor and can click links/buttons normally. ──── */
-  @media (pointer: fine) {
-    html.custom-cursor-active,
-    html.custom-cursor-active * {
-      cursor: none;
-    }
-  }
 }
 
 @layer components {

@@ -5,7 +5,6 @@ import { Footer } from '@/components/Footer';
 import { LenisProvider } from '@/components/LenisProvider';
 import { GeistSans } from 'geist/font/sans';
 import { GeistMono } from 'geist/font/mono';
-import { CustomCursor } from '@/components/CustomCursor';
 import { AnimatedGeometricBg } from '@/components/AnimatedGeometricBg';
 import { PaberinAuthProvider } from '@/lib/auth';
 
@@ -40,12 +39,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               Stacking context (verified):
               - AnimatedGeometricBg: position fixed, pointer-events-none, z-0
                 → canvas sits behind everything and never blocks clicks.
-              - CustomCursor: pointer-events-none, z-[9999] → floats above all.
               - Nav: sticky, z-50.
               - main: relative, z-10 → always above the bg canvas.
             */}
             <AnimatedGeometricBg />
-            <CustomCursor />
             <Nav />
             <main className="flex-1 mt-14 relative z-10">{children}</main>
             <Footer />

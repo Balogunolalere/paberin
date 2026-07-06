@@ -1,13 +1,16 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { usePaberinAuth } from '@/lib/auth';
+import { api, type SavedAddress } from '@/lib/api';
 
 interface OrderFormData {
   name: string;
   email: string;
   material: string;
   description: string;
+  deliveryAddress: string;
 }
 
 const MATERIAL_OPTIONS = [
@@ -25,9 +28,33 @@ export function OrderForm() {
     email: '',
     material: '',
     description: '',
+    deliveryAddress: '',
   });
   const [submitted, setSubmitted] = useState(false);
   const [focused, setFocused] = useState<string | null>(null);
+
+  /* ── Saved address picker (shown only when logged in) ── */
+  const { customer } = usePaberinAuth();
+  const [savedAddresses, setSavedAddresses] = useState<SavedAddress[]>([]);
+
+  useEffect(() => {
+    if (!customer?.phone) return;
+    api
+      .getSavedAddresses(customer.phone)
+      .then((data) => setSavedAddresses(data.addresses || []))
+      .catch(() => {
+        // Swallow — the picker just stays hidden/empty.
+      });
+  }, [customer?.phone]);
+
+  const useSavedAddress = (id: string) => {
+    const a = savedAddresses.find((x) => x.id === id);
+    if (!a) return;
+    const joined = [a.address, a.city, a.state, a.landmark]
+      .filter(Boolean)
+      .join(', ');
+    setForm((prev) => ({ ...prev, deliveryAddress: joined }));
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,7 +68,7 @@ export function OrderForm() {
   };
 
   const resetForm = () => {
-    setForm({ name: '', email: '', material: '', description: '' });
+    setForm({ name: '', email: '', material: '', description: '', deliveryAddress: '' });
     setSubmitted(false);
   };
 
@@ -206,6 +233,55 @@ export function OrderForm() {
             onFocus={() => setFocused('description')}
             onBlur={() => setFocused(null)}
             placeholder="Describe what you want cut — dimensions, quantity, material specifics. Attach files if you have them."
+            className="form-input laser-focus resize-none"
+          />
+        </div>
+
+        {/* Delivery Address — with saved-address picker when logged in */}
+        <div>
+          <label htmlFor="deliveryAddress" className="form-label">
+            05 — Delivery Address
+          </label>
+          {customer && savedAddresses.length > 0 && (
+            <div className="mb-3">
+              <label
+                htmlFor="savedAddress"
+                className="block font-mono text-[10px] uppercase tracking-[0.15em] text-[#999] mb-2"
+              >
+                Use saved address
+              </label>
+              <select
+                id="savedAddress"
+                defaultValue=""
+                onChange={(e) => {
+                  if (e.target.value) useSavedAddress(e.target.value);
+                }}
+                className="form-input laser-focus appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%228%22%20viewBox%3D%220%200%2012%208%22%3E%3Cpath%20fill%3D%22none%22%20stroke%3D%22%238A8078%22%20stroke-width%3D%221.5%22%20d%3D%22M1%201l5%205%205-5%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px_8px] bg-[right_1.25rem_center] bg-no-repeat"
+              >
+                <option value="">Pick a saved address…</option>
+                {savedAddresses.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.label}
+                    {a.isDefault ? ' (default)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+          {customer && savedAddresses.length === 0 && (
+            <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.12em] text-[#888]">
+              No saved addresses yet — add one from your dashboard.
+            </p>
+          )}
+          <textarea
+            id="deliveryAddress"
+            name="deliveryAddress"
+            rows={3}
+            value={form.deliveryAddress}
+            onChange={handleChange}
+            onFocus={() => setFocused('deliveryAddress')}
+            onBlur={() => setFocused(null)}
+            placeholder="Where should we deliver the finished pieces? (Pickup if blank.)"
             className="form-input laser-focus resize-none"
           />
         </div>

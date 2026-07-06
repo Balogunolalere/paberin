@@ -11,12 +11,14 @@ import { useRouter } from 'next/navigation';
 const NAV_LINKS = [
   { num: '01', label: 'Home', href: '/' },
   { num: '02', label: 'Start an Order', href: '/order' },
-  { num: '03', label: 'Track an Order', href: '/track' },
-  { num: '04', label: 'Dashboard', href: '/dashboard' },
-  { num: '05', label: 'Support / Chat', href: '/chat' },
-  { num: '06', label: 'Contact', href: '/contact' },
-  { num: '07', label: 'Terms', href: '/terms' },
-  { num: '08', label: 'Privacy', href: '/privacy' },
+  { num: '03', label: 'Price Calculator', href: '/calculator' },
+  { num: '04', label: 'Track an Order', href: '/track' },
+  { num: '05', label: 'FAQ', href: '/faq' },
+  { num: '06', label: 'Dashboard', href: '/dashboard' },
+  { num: '07', label: 'Support / Chat', href: '/chat' },
+  { num: '08', label: 'Contact', href: '/contact' },
+  { num: '09', label: 'Terms', href: '/terms' },
+  { num: '10', label: 'Privacy', href: '/privacy' },
 ];
 
 export function SideMenu() {
