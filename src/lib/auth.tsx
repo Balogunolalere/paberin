@@ -106,13 +106,9 @@ export function PaberinAuthProvider({ children }: { children: ReactNode }) {
           phone: data.phone || phone,
           ordersCount: data.orders?.length || 0,
           lastSeen: new Date().toISOString(),
+          name: data.customerName || undefined,
+          email: data.customerEmail || undefined,
         };
-        // Best-effort: pull name/email from the most recent order
-        const latest = data.orders?.[0] as Order | undefined;
-        if (latest && (latest as any).customerName) {
-          profile.name = (latest as any).customerName;
-          profile.email = (latest as any).customerEmail;
-        }
         persist(profile);
         return { ok: true, isNewCustomer: false };
       } catch (err: any) {

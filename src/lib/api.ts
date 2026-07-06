@@ -11,7 +11,7 @@
  * REST endpoints one-to-one.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'http://localhost:3000';
+const API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
 
 /** Low-level fetch wrapper that normalises the admin's `{ data, error }` envelope. */
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
@@ -112,9 +112,11 @@ export interface Order {
 
 export interface PhoneOrdersResponse {
   phone: string;
+  customerName?: string;
+  customerEmail?: string;
   orders: Pick<
     Order,
-    'orderNumber' | 'state' | 'serviceLabel' | 'totalAmount' | 'createdAt' | 'brand'
+    'orderNumber' | 'state' | 'serviceLabel' | 'serviceType' | 'quantity' | 'totalAmount' | 'sla' | 'deliveryMethod' | 'createdAt' | 'brand'
   >[];
 }
 
