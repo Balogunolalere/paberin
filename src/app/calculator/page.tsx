@@ -24,8 +24,8 @@ const DELIVERY_OPTIONS: { value: DeliveryOption; label: string; hint: string }[]
 
 function buildDeliveryBody(opt: DeliveryOption): Record<string, unknown> {
   if (opt === 'pickup') return { deliveryMethod: 'PICKUP' };
-  if (opt === 'local') return { deliveryMethod: 'DELIVERY', deliveryDistanceKm: 10 };
-  if (opt === 'nationwide') return { deliveryMethod: 'DELIVERY', deliveryDistanceKm: 80 };
+  if (opt === 'local') return { deliveryMethod: 'LOCAL_DELIVERY', deliveryDistanceKm: 10 };
+  if (opt === 'nationwide') return { deliveryMethod: 'NATIONWIDE_WAYBILL', deliveryDistanceKm: 80 };
   return {};
 }
 
