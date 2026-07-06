@@ -376,9 +376,8 @@ function DashboardContent() {
                   value={customer?.phone || ''}
                   readOnly
                   disabled
-                  className="opacity-60 cursor-not-allowed
                   placeholder="+234…"
-                  className="form-input"
+                  className="form-input opacity-60 cursor-not-allowed"
                 />
               </div>
               <div>
