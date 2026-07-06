@@ -96,7 +96,6 @@ function DashboardContent() {
   /* ── Profile edit state (Feature 1) ── */
   const [showProfileEdit, setShowProfileEdit] = useState(false);
   const [editName, setEditName] = useState('');
-  const [editPhone, setEditPhone] = useState('');
   const [editEmail, setEditEmail] = useState('');
   const [profileSaved, setProfileSaved] = useState(false);
 
@@ -242,7 +241,6 @@ function DashboardContent() {
   /* ── Profile editor (Feature 1) ── */
   const openProfileEdit = () => {
     setEditName(customer?.name || '');
-    setEditPhone(customer?.phone || '');
     setEditEmail(customer?.email || '');
     setProfileSaved(false);
     setShowProfileEdit(true);
@@ -251,7 +249,6 @@ function DashboardContent() {
   const saveProfile = () => {
     updateProfile({
       name: editName.trim() || customer?.name,
-      phone: editPhone.trim() || customer?.phone,
       email: editEmail.trim() || customer?.email,
       lastSeen: new Date().toISOString(),
     });
@@ -376,8 +373,10 @@ function DashboardContent() {
                   Phone
                 </label>
                 <input
-                  value={editPhone}
-                  onChange={(e) => setEditPhone(e.target.value)}
+                  value={customer?.phone || ''}
+                  readOnly
+                  disabled
+                  className="opacity-60 cursor-not-allowed
                   placeholder="+234…"
                   className="form-input"
                 />

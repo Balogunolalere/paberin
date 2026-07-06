@@ -96,8 +96,8 @@ export function PaberinAuthProvider({ children }: { children: ReactNode }) {
 
   const loginWithPhone = useCallback(
     async (rawPhone: string): Promise<AuthResult> => {
-      const phone = normalizePhone(rawPhone);
-      if (!phone || phone.length < 10) {
+      const phone = rawPhone.trim();
+      if (!phone || phone.length < 6) {
         return { ok: false, error: 'Enter a valid phone number.' };
       }
       try {
@@ -130,7 +130,7 @@ export function PaberinAuthProvider({ children }: { children: ReactNode }) {
   const signupAsNewCustomer = useCallback(
     (info: { phone: string; name?: string; email?: string }) => {
       const profile: PaberinCustomer = {
-        phone: normalizePhone(info.phone),
+        phone: info.phone.trim(),
         name: info.name,
         email: info.email,
         isNew: true,
