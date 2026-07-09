@@ -4,6 +4,7 @@ import { useState, useEffect, Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { ScrollReveal } from '@/components/ScrollReveal';
+import { OrderStepper } from '@/components/OrderStepper';
 import {
   api,
   formatNaira,
@@ -162,8 +163,8 @@ function TrackInner() {
           {order && (
             <ScrollReveal delay={0.1}>
               <div className="space-y-6">
-                {/* Header card */}
-                <div className="card">
+                {/* Header card — premium gradient border + live stepper */}
+                <div className="card-premium card-premium-lg p-6 sm:p-7">
                   <div className="flex items-start justify-between gap-4 flex-wrap">
                     <div>
                       <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-2">
@@ -183,7 +184,12 @@ function TrackInner() {
                     </span>
                   </div>
 
-                  <div className="rule my-5" />
+                  {/* Live progress stepper */}
+                  <div className="mt-6">
+                    <OrderStepper current={order.state} />
+                  </div>
+
+                  <div className="rule my-6" />
 
                   <div className="grid grid-cols-2 gap-4 text-sm">
                     <div>

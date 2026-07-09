@@ -63,43 +63,55 @@ function LoginInner() {
   };
 
   return (
-    <div className="max-w-[87.5rem] mx-auto px-4 sm:px-6 md:px-10 py-12 sm:py-16 md:py-24">
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 sm:gap-16 md:gap-24 items-start">
-        {/* Left — Hero copy */}
-        <div>
-          <ScrollReveal>
-            <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-6">
-              Customer Access
-            </p>
-          </ScrollReveal>
-          <ScrollReveal delay={0.1}>
-            <h1 className="text-2xl sm:text-3xl md:text-5xl font-bold text-black leading-[1.1] max-w-[30rem]">
-              Welcome back<span className="text-[#FF5C00]">.</span>
-            </h1>
-          </ScrollReveal>
-          <ScrollReveal delay={0.2}>
-            <p className="text-base text-[#666666] max-w-[27.5rem] mt-6 leading-relaxed">
-              Log in with the phone number you used to place orders. Track every
-              job in real time, manage deliveries, and reorder in one click.
-            </p>
-          </ScrollReveal>
+    <div className="max-w-[87.5rem] mx-auto px-4 sm:px-6 md:px-10 py-8 sm:py-12 md:py-16">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-10 items-stretch">
+        {/* Left — Premium dark panel */}
+        <div className="panel-dark rounded-2xl p-8 sm:p-10 lg:p-12 lg:min-h-[34rem] flex flex-col">
+          <div className="panel-dark-grid" />
+          <div className="relative flex flex-col h-full">
+            <ScrollReveal>
+              <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#FF5C00] mb-6">
+                Customer Access
+              </p>
+            </ScrollReveal>
+            <ScrollReveal delay={0.1}>
+              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-white leading-[1.05] max-w-[24rem]">
+                Welcome back<span className="text-[#FF5C00]">.</span>
+              </h1>
+            </ScrollReveal>
+            <ScrollReveal delay={0.2}>
+              <p className="text-base text-white/60 max-w-[24rem] mt-5 leading-relaxed">
+                Log in with the phone number you used to place orders. Track every
+                job in real time, manage deliveries, and reorder in one click.
+              </p>
+            </ScrollReveal>
 
-          <ScrollReveal delay={0.3}>
-            <div className="mt-10 space-y-4 text-sm text-[#666666] max-w-[27.5rem]">
-              <div className="flex items-start gap-3">
-                <span className="font-mono text-[#FF5C00] text-xs pt-0.5">01</span>
-                <p>Enter the phone number linked to your past orders.</p>
+            <ScrollReveal delay={0.3}>
+              <div className="mt-8 space-y-4 text-sm text-white/70 max-w-[24rem]">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#FF5C00] font-mono text-[10px] font-bold text-white">1</span>
+                  <p>Enter the phone number linked to your past orders.</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#FF5C00] font-mono text-[10px] font-bold text-white">2</span>
+                  <p>We verify it against our records — no password to forget.</p>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-[#FF5C00] font-mono text-[10px] font-bold text-white">3</span>
+                  <p>New here? Skip ahead and we&apos;ll set you up at checkout.</p>
+                </div>
               </div>
-              <div className="flex items-start gap-3">
-                <span className="font-mono text-[#FF5C00] text-xs pt-0.5">02</span>
-                <p>We verify it against our records — no password to forget.</p>
-              </div>
-              <div className="flex items-start gap-3">
-                <span className="font-mono text-[#FF5C00] text-xs pt-0.5">03</span>
-                <p>New here? Skip ahead and we&apos;ll set you up at checkout.</p>
+            </ScrollReveal>
+
+            <div className="mt-auto pt-8">
+              <div className="flex items-center gap-2 text-xs text-white/40">
+                <span className="h-1.5 w-1.5 animate-blink rounded-full bg-[#FF5C00]" />
+                <span className="font-mono uppercase tracking-[0.12em]">
+                  Ogba, Ikeja · Lagos
+                </span>
               </div>
             </div>
-          </ScrollReveal>
+          </div>
         </div>
 
         {/* Right — Form */}

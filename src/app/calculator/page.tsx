@@ -334,10 +334,16 @@ export default function CalculatorPage() {
           {!quoteLoading && breakdown && (
             <ScrollReveal delay={0.1}>
               <div className="space-y-6">
-                <div className="card">
-                  <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-5">
-                    Estimate breakdown
-                  </p>
+                <div className="card-premium card-premium-lg p-6 sm:p-7">
+                  <div className="flex items-center justify-between mb-5">
+                    <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                      Estimate breakdown
+                    </p>
+                    <span className="pill pill-accent">
+                      <span className="pill-dot" />
+                      Live quote
+                    </span>
+                  </div>
 
                   {breakdown.serviceLabel && (
                     <p className="text-sm font-semibold text-black mb-4">

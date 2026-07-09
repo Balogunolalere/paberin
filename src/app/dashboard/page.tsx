@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { EscalationThread } from '@/components/EscalationThread';
+import { OrderStepper } from '@/components/OrderStepper';
 import { ProtectedRoute } from '@/lib/protected';
 import { usePaberinAuth } from '@/lib/auth';
 import {
@@ -1067,6 +1068,11 @@ function DashboardContent() {
                     <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-[#888888]">
                       {formatDate(detailOrder.createdAt)}
                     </span>
+                  </div>
+
+                  {/* Live progress stepper */}
+                  <div className="mb-6 rounded-lg border border-[#EAEAEA] bg-[#FAFAFA] p-4">
+                    <OrderStepper current={detailOrder.state} />
                   </div>
 
                   {/* Detail grid */}
