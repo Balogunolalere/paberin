@@ -424,6 +424,50 @@ const FAQ_ITEMS = [
   },
 ];
 
+const CLIENTS = [
+  'Studio Lekki',
+  'Ankara Atelier',
+  'Northern Leather',
+  'PrintHouse NG',
+  'Makers Lagos',
+  'Konga Signs',
+  'Felt & Co',
+  'BrandBox',
+];
+
+const PRICING_TIERS = [
+  {
+    name: 'Standard',
+    lead: '72 hrs',
+    price: 'from ₦250',
+    unit: 'per cut',
+    features: ['All materials', 'File check included', 'Order tracking', 'Quality guarantee'],
+    cta: 'Start an order',
+    href: '/order',
+    featured: false,
+  },
+  {
+    name: 'Express',
+    lead: '48 hrs',
+    price: '+35%',
+    unit: 'surcharge',
+    features: ['Priority scheduling', 'Same-day file check', 'Real-time updates', 'Dedicated support'],
+    cta: 'Get it fast',
+    href: '/calculator',
+    featured: true,
+  },
+  {
+    name: 'Bulk & Business',
+    lead: 'Custom',
+    price: '−10%',
+    unit: 'at 100+ units',
+    features: ['Volume discounts', 'NET-14 invoicing', 'Material sourcing', 'Account manager'],
+    cta: 'Talk to us',
+    href: '/contact',
+    featured: false,
+  },
+];
+
 function CountUp({
   target,
   decimals = 0,
@@ -568,6 +612,35 @@ export default function Home() {
           </motion.div>
         </div>
       </section>
+
+      {/* ═══════════════════════════════════════════════════════════════════════════
+          CLIENT MARQUEE — scrolling trust band
+          ═══════════════════════════════════════════════════════════════════════════ */}
+      <div className="border-y border-[#EAEAEA] bg-white/60 py-5 overflow-hidden">
+        <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#999] text-center mb-4">
+          Trusted by makers, studios & fabricators across Lagos
+        </p>
+        <div className="mask-fade-edges overflow-hidden">
+          <div className="marquee-track">
+            <div className="flex shrink-0">
+              {CLIENTS.map((c) => (
+                <div key={c} className="mx-6 flex items-center gap-2 font-mono text-sm font-medium text-[#666]">
+                  <span className="h-1 w-1 rounded-full bg-[#FF5C00]" />
+                  {c}
+                </div>
+              ))}
+            </div>
+            <div className="flex shrink-0" aria-hidden="true">
+              {CLIENTS.map((c) => (
+                <div key={c} className="mx-6 flex items-center gap-2 font-mono text-sm font-medium text-[#666]">
+                  <span className="h-1 w-1 rounded-full bg-[#FF5C00]" />
+                  {c}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
 
       {/* ═══════════════════════════════════════════════════════════════════════════
           MAGAZINE GRID — PAGE 2: SERVICES + FEATURED STAT
@@ -866,29 +939,31 @@ export default function Home() {
         <div className="rule" />
       </div>
 
-      <section className="max-w-[90rem] mx-auto px-4 sm:px-6 md:px-10 py-10 sm:py-14 md:py-20">
-        <ScrollReveal>
-          <p className="font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.15em] text-[#999] mb-8">
-            By the Numbers
-          </p>
-        </ScrollReveal>
+      <section className="bg-[#0D0D0D] text-white py-16 sm:py-20">
+        <div className="max-w-[90rem] mx-auto px-4 sm:px-6 md:px-10">
+          <ScrollReveal>
+            <p className="font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.15em] text-white/40 mb-8">
+              By the Numbers
+            </p>
+          </ScrollReveal>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 md:gap-8">
-          {STATS.map((stat, i) => (
-            <ScrollReveal key={stat.label} delay={i * 0.1}>
-              <div className="border-t-2 border-[#FF5C00] pt-4">
-                <div className="text-[#FF5C00] mb-3">
-                  {stat.icon}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-10">
+            {STATS.map((stat, i) => (
+              <ScrollReveal key={stat.label} delay={i * 0.1}>
+                <div className="border-t-2 border-[#FF5C00] pt-4">
+                  <div className="text-[#FF5C00] mb-3">
+                    {stat.icon}
+                  </div>
+                  <p className="text-4xl sm:text-5xl md:text-6xl font-bold text-white tracking-tight leading-none">
+                    <CountUp target={stat.target} decimals={stat.decimals} />
+                    <span className="text-base text-white/40 ml-1 align-super">{stat.unit}</span>
+                  </p>
+                  <p className="text-[0.8rem] font-medium text-white mt-2">{stat.label}</p>
+                  <p className="text-[0.7rem] text-white/40 mt-0.5">{stat.sublabel}</p>
                 </div>
-                <p className="text-3xl sm:text-4xl md:text-5xl font-bold text-black tracking-tight leading-none">
-                  <CountUp target={stat.target} decimals={stat.decimals} />
-                  <span className="text-base text-[#999] ml-1 align-super">{stat.unit}</span>
-                </p>
-                <p className="text-[0.8rem] font-medium text-black mt-2">{stat.label}</p>
-                <p className="text-[0.7rem] text-[#999] mt-0.5">{stat.sublabel}</p>
-              </div>
-            </ScrollReveal>
-          ))}
+              </ScrollReveal>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -940,6 +1015,70 @@ export default function Home() {
               </ScrollReveal>
             );
           })}
+        </div>
+      </section>
+
+      {/* ═══════════════════════════════════════════════════════════════════════════
+          PRICING TEASER — transparent per-cut pricing
+          ═══════════════════════════════════════════════════════════════════════════ */}
+      <section id="pricing" className="max-w-[90rem] mx-auto px-4 sm:px-6 md:px-10 py-14 sm:py-18 md:py-24 bg-[#F7F7F7] border-y border-[#EAEAEA]">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-10 md:mb-14">
+          <ScrollReveal>
+            <p className="font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.15em] text-[#999]">
+              Pricing
+            </p>
+          </ScrollReveal>
+          <ScrollReveal delay={0.1}>
+            <h2 className="lg:col-span-2 text-2xl sm:text-3xl md:text-4xl font-bold text-black leading-[1.1]">
+              Transparent per cut. No surprises.
+            </h2>
+          </ScrollReveal>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+          {PRICING_TIERS.map((tier, i) => (
+            <ScrollReveal key={tier.name} delay={i * 0.1}>
+              <div
+                className={`relative h-full p-6 flex flex-col ${
+                  tier.featured
+                    ? 'card-premium card-premium-lg'
+                    : 'bg-white border border-[#EAEAEA] rounded-xl'
+                }`}
+              >
+                {tier.featured && (
+                  <span className="absolute -top-3 left-6 rounded-full bg-[#FF5C00] px-3 py-1 font-mono text-[10px] uppercase tracking-[0.12em] text-white font-bold">
+                    Most popular
+                  </span>
+                )}
+                <div className="flex items-baseline justify-between">
+                  <h3 className="text-lg font-semibold text-black">{tier.name}</h3>
+                  <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#999]">
+                    {tier.lead}
+                  </span>
+                </div>
+                <div className="mt-4 flex items-baseline gap-1.5">
+                  <span className="font-mono text-3xl font-bold text-black">{tier.price}</span>
+                  <span className="text-sm text-[#666]">{tier.unit}</span>
+                </div>
+                <ul className="mt-6 flex-1 space-y-3">
+                  {tier.features.map((f) => (
+                    <li key={f} className="flex items-start gap-2.5 text-sm text-[#666]">
+                      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="#FF5C00" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mt-0.5 shrink-0">
+                        <polyline points="3,8 6,11 13,4" />
+                      </svg>
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+                <Link
+                  href={tier.href}
+                  className={`mt-6 ${tier.featured ? 'btn-primary' : 'btn-outline'}`}
+                >
+                  {tier.cta}
+                </Link>
+              </div>
+            </ScrollReveal>
+          ))}
         </div>
       </section>
 
@@ -1003,34 +1142,53 @@ export default function Home() {
         <div className="rule" />
       </div>
 
-      <section className="max-w-[90rem] mx-auto px-4 sm:px-6 md:px-10 py-14 sm:py-18 md:py-28 grid-lines">
-        <div className="text-center max-w-[40rem] mx-auto">
-          <ScrollReveal>
-            <p className="font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.15em] text-[#999] mb-6">
-              Get Started
-            </p>
-          </ScrollReveal>
-          <ScrollReveal delay={0.1}>
-            <h2 className="text-3xl sm:text-4xl md:text-6xl font-bold text-black leading-[1.05]">
-              Ready to cut<span className="text-[#FF5C00]">.</span>
-            </h2>
-          </ScrollReveal>
-          <ScrollReveal delay={0.15}>
-            <p className="text-[0.85rem] sm:text-base text-[#666] mt-6 leading-relaxed">
-              Send us your design and pick your material. We&rsquo;ll handle the rest — from
-              precision cutting to delivery at your doorstep.
-            </p>
-          </ScrollReveal>
-          <ScrollReveal delay={0.2}>
-            <div className="mt-10 flex justify-center gap-4 flex-wrap">
-              <Link href="/contact" className="btn-primary">
-                Place an Order
-              </Link>
-              <Link href="/contact" className="btn-outline">
-                Talk to Us
-              </Link>
+      <section className="px-4 sm:px-6 md:px-10 py-14 sm:py-18 md:py-24">
+        <div className="max-w-[90rem] mx-auto">
+          <div className="relative overflow-hidden rounded-3xl bg-[#0D0D0D] px-6 py-16 text-center text-white sm:px-12 sm:py-24">
+            {/* Grid pattern overlay */}
+            <div
+              className="pointer-events-none absolute inset-0 opacity-30"
+              style={{
+                backgroundImage:
+                  'linear-gradient(rgba(255,92,0,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,92,0,0.5) 1px, transparent 1px)',
+                backgroundSize: '44px 44px',
+                WebkitMaskImage: 'radial-gradient(ellipse at center, #000 30%, transparent 75%)',
+                maskImage: 'radial-gradient(ellipse at center, #000 30%, transparent 75%)',
+              }}
+            />
+            <div className="relative">
+              <ScrollReveal>
+                <p className="font-mono text-[10px] sm:text-[11px] uppercase tracking-[0.15em] text-white/40 mb-6">
+                  Ready when you are
+                </p>
+              </ScrollReveal>
+              <ScrollReveal delay={0.1}>
+                <h2 className="mx-auto max-w-2xl text-3xl sm:text-4xl md:text-6xl font-bold tracking-tight leading-[1.05]">
+                  Send a file. Get a quote in{' '}
+                  <span className="text-[#FF5C00]">seconds.</span>
+                </h2>
+              </ScrollReveal>
+              <ScrollReveal delay={0.15}>
+                <p className="mx-auto mt-5 max-w-lg text-[0.85rem] sm:text-base text-white/60 leading-relaxed">
+                  No account needed to estimate. Sign in to track orders, save
+                  designs and reorder in one tap.
+                </p>
+              </ScrollReveal>
+              <ScrollReveal delay={0.2}>
+                <div className="mt-10 flex justify-center gap-4 flex-wrap">
+                  <Link href="/order" className="btn-primary">
+                    Place an Order
+                  </Link>
+                  <Link
+                    href="/calculator"
+                    className="btn-outline border-white/20 bg-white/5 text-white hover:bg-white/10"
+                  >
+                    Estimate price
+                  </Link>
+                </div>
+              </ScrollReveal>
             </div>
-          </ScrollReveal>
+          </div>
         </div>
       </section>
     </div>
