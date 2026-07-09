@@ -6,6 +6,7 @@ import { motion, useInView, animate, useReducedMotion } from 'framer-motion';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { GrainyTexture } from '@/components/GrainyTexture';
 import { GeometricLines } from '@/components/GeometricLines';
+import { LaserCutHero } from '@/components/LaserCutHero';
 
 const SERVICES = [
   {
@@ -500,12 +501,14 @@ export default function Home() {
             </div>
 
             {/*
-              Image placeholder: spans 2 of 5 cols, row-span 2.
-              Empty for now - the user will drop in their own hero image later.
-              Kept the same aspect ratio + surface styling so the magazine
-              grid layout is preserved.
+              Animated laser-cut hero visual: spans 2 of 5 cols, row-span 2.
+              A live canvas of a laser tracing a rose-curve medallion, with
+              sparks, glow and a job HUD. Kept the same aspect ratio +
+              surface styling so the magazine grid layout is preserved.
             */}
-            <div className="hidden lg:block lg:col-span-2 lg:row-span-2 relative aspect-[3/4] overflow-hidden border border-[#EAEAEA] bg-[#F7F7F7]" />
+            <div className="hidden lg:block lg:col-span-2 lg:row-span-2">
+              <LaserCutHero className="h-full w-full aspect-[3/4]" />
+            </div>
 
             {/* Body copy + CTAs: spans 3 of 5 cols */}
             <div className="lg:col-span-3">
