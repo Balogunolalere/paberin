@@ -47,7 +47,7 @@ export function OrderForm() {
       });
   }, [customer?.phone]);
 
-  const useSavedAddress = (id: string) => {
+  const loadSavedAddress = (id: string) => {
     const a = savedAddresses.find((x) => x.id === id);
     if (!a) return;
     const joined = [a.address, a.city, a.state, a.landmark]
@@ -254,7 +254,7 @@ export function OrderForm() {
                 id="savedAddress"
                 defaultValue=""
                 onChange={(e) => {
-                  if (e.target.value) useSavedAddress(e.target.value);
+                  if (e.target.value) loadSavedAddress(e.target.value);
                 }}
                 className="form-input laser-focus appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%228%22%20viewBox%3D%220%200%2012%208%22%3E%3Cpath%20fill%3D%22none%22%20stroke%3D%22%238A8078%22%20stroke-width%3D%221.5%22%20d%3D%22M1%201l5%205%205-5%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px_8px] bg-[right_1.25rem_center] bg-no-repeat"
               >

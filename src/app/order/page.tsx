@@ -967,6 +967,18 @@ function OrderPageInner() {
               <Link href="/privacy" className="underline hover:text-black">
                 Privacy Policy
               </Link>
+              . Review our{' '}
+              <Link href="/delivery" className="underline hover:text-black">
+                Delivery Method
+              </Link>
+              ,{' '}
+              <Link href="/refund-policy" className="underline hover:text-black">
+                Refund Policy
+              </Link>
+              , and{' '}
+              <Link href="/cancellation-policy" className="underline hover:text-black">
+                Cancellation Policy
+              </Link>
               . Payment is processed securely via Paystack.
             </div>
           </div>

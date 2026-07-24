@@ -34,7 +34,7 @@ export function ScrollReveal({
         import('gsap/ScrollTrigger'),
       ]);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line
       const gsap = (gsapMod as any).default || gsapMod;
       ScrollTrigger = stMod.ScrollTrigger;
       gsap.registerPlugin(ScrollTrigger);

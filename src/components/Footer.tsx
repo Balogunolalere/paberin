@@ -22,6 +22,9 @@ const COMPANY = [
   { label: 'Contact', href: '/contact' },
   { label: 'Terms', href: '/terms' },
   { label: 'Privacy', href: '/privacy' },
+  { label: 'Delivery', href: '/delivery' },
+  { label: 'Refund Policy', href: '/refund-policy' },
+  { label: 'Cancellation Policy', href: '/cancellation-policy' },
 ];
 
 const SOCIALS = [
@@ -183,7 +186,7 @@ export function Footer() {
             </p>
           </div>
 
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 flex-wrap">
             <Link
               href="/terms"
               className="text-xs text-[#555] hover:text-white transition-colors"
@@ -195,6 +198,24 @@ export function Footer() {
               className="text-xs text-[#555] hover:text-white transition-colors"
             >
               Privacy
+            </Link>
+            <Link
+              href="/delivery"
+              className="text-xs text-[#555] hover:text-white transition-colors"
+            >
+              Delivery
+            </Link>
+            <Link
+              href="/refund-policy"
+              className="text-xs text-[#555] hover:text-white transition-colors"
+            >
+              Refund Policy
+            </Link>
+            <Link
+              href="/cancellation-policy"
+              className="text-xs text-[#555] hover:text-white transition-colors"
+            >
+              Cancellation Policy
             </Link>
             <Link
               href="/contact"
