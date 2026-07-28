@@ -309,9 +309,9 @@ export const api = {
       body: JSON.stringify({ phone }),
     }),
 
-  /** Send a chat message to the Paberin LLM. */
+  /** Send a chat message to the Paberin LLM (Agnes 2.0). */
   sendChat: (body: ChatRequestBody) =>
-    apiFetch<ChatResponse>('/api/skyal/chat', {
+    apiFetch<ChatResponse>('/api/chat', {
       method: 'POST',
       body: JSON.stringify({ ...body, brand: 'paberin' }),
     }),
@@ -456,6 +456,7 @@ export const api = {
     amount: number;
     email: string;
     orderNumber: string;
+    brand?: 'SKYAL' | 'PABERIN';
     metadata?: Record<string, unknown>;
   }) =>
     apiFetch<PaymentInitResponse>('/api/payment/initialize', {

@@ -278,6 +278,7 @@ function OrderPageInner() {
           amount: order.totalAmount,
           email: form.customerEmail,
           orderNumber: order.orderNumber,
+          brand: 'PABERIN',
           metadata: { orderNumber: order.orderNumber, brand: 'PABERIN' },
         });
         // Redirect to Paystack checkout
