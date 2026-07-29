@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitest/config'
+import { resolve } from 'path'
 
-export default defineConfig({
+const config = {
   test: {
     globals: true,
     environment: 'node',
@@ -12,4 +13,13 @@ export default defineConfig({
       exclude: ['node_modules/', '.next/'],
     },
   },
-})
+  vite: {
+    resolve: {
+      alias: [
+        { find: '@', replacement: resolve(__dirname, 'src') },
+      ],
+    },
+  },
+} as any
+
+export default defineConfig(config)
