@@ -98,7 +98,7 @@ async function retryWithBackoff<T>(
   maxRetries = MAX_RETRIES,
   baseDelay = RETRY_BASE_DELAY
 ): Promise<T> {
-  let lastError: Error;
+  let lastError: Error = new Error('Unknown error');
   
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
