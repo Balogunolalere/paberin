@@ -26,46 +26,57 @@ import {
 function CompleteInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const ref = searchParams.get('ref') || '';
+  const paystackRef = searchParams.get('reference') || searchParams.get('trxref') || '';
+  const orderNum = searchParams.get('order') || '';
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [verified, setVerified] = useState(false);
 
-  // Verify payment and fetch order on mount
-  const verifyAndLoad = useCallback(async () => {
-    if (!ref) {
-      setError('No payment reference provided.');
-      setLoading(false);
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      // Verify the payment with the admin backend
-      const verifyResult = await api.verifyPayment(ref);
-      if (verifyResult.verified) {
-        setVerified(true);
-        // After successful verification, fetch the updated order
-        // The reference is the orderNumber from initializePayment call
-        const orderData = await api.trackOrder(ref);
-        setOrder(orderData);
-      } else {
-        setError('Payment verification failed. Please try again.');
-        setLoading(false);
-      }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to verify payment. Please try again.');
-      setLoading(false);
-      console.error('Payment verification error:', err);
-    }
-  }, [ref]);
-
+  // Verify payment and fetch order on mount — runs once
   useEffect(() => {
-    verifyAndLoad();
-  }, [verifyAndLoad]);
+    let cancelled = false;
+
+    (async () => {
+      if (!paystackRef) {
+        if (!cancelled) {
+          setError('No payment reference provided.');
+          setLoading(false);
+        }
+        return;
+      }
+
+      try {
+        // Verify the payment with the admin backend
+        const verifyResult = await api.verifyPayment(paystackRef);
+        if (!verifyResult.verified) {
+          if (!cancelled) {
+            setError('Payment verification failed. Please try again.');
+            setLoading(false);
+          }
+          return;
+        }
+
+        // Fetch order details by order number (passed in callback URL)
+        if (orderNum) {
+          try {
+            const orderData = await api.trackOrder(orderNum);
+            if (!cancelled) setOrder(orderData);
+          } catch {
+            console.warn('Could not fetch order details');
+          }
+        }
+
+        if (!cancelled) setLoading(false);
+      } catch (err: any) {
+        if (!cancelled) {
+          setError(err?.message || 'Failed to verify payment.');
+          setLoading(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, []); // Run once on mount
 
   // If loading, show spinner
   if (loading) {
@@ -110,37 +121,37 @@ function CompleteInner() {
     );
   }
 
-  // If not verified yet (should not happen due to loading state check)
-  if (!verified) {
-    return (
-      <div className="max-w-[87.5rem] mx-auto px-4 sm:px-6 md:px-10 py-12 sm:py-16 md:py-24">
-        <ScrollReveal>
-          <div className="text-center">
-            <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-6">
-              Payment Pending
-            </p>
-            <p className="text-sm text-[#666666]">Your payment is being processed. Please wait.</p>
-          </div>
-        </ScrollReveal>
-      </div>
-    );
-  }
+  // Success state — show order confirmation (even without full order details)
+  const printReceipt = () => {
+    const num = order?.orderNumber || orderNum || 'N/A';
+    const svc = order?.serviceLabel || 'Your order';
+    const total = order?.totalAmount ? formatNaira(order.totalAmount) : '—';
+    const name = order?.customerName || '';
+    const phone = order?.customerPhone || '';
+    const email = order?.customerEmail || '';
+    const date = order?.createdAt
+      ? new Date(order.createdAt).toLocaleDateString('en-NG', { year: 'numeric', month: 'long', day: 'numeric' })
+      : new Date().toLocaleDateString('en-NG', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  // Success state — show order confirmation
-  if (!order) {
-    return (
-      <div className="max-w-[87.5rem] mx-auto px-4 sm:px-6 md:px-10 py-12 sm:py-16 md:py-24">
-        <ScrollReveal>
-          <div className="text-center">
-            <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-6">
-              Payment Confirmed
-            </p>
-            <p className="text-sm text-[#666666]">Fetching order details…</p>
-          </div>
-        </ScrollReveal>
-      </div>
-    );
-  }
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Receipt ${num}</title>
+<style>body{font-family:ui-sans-serif,system-ui,sans-serif;max-width:400px;margin:40px auto;padding:20px;color:#1a1a1a}
+h1{font-size:20px;margin-bottom:4px}.brand{color:#FF5C00;font-weight:600;font-size:14px;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;margin:16px 0}td{padding:8px 0;border-bottom:1px solid #e5e5e5;font-size:14px}
+td:last-child{text-align:right;font-weight:500}.total{font-size:18px;font-weight:700}
+.footer{margin-top:24px;font-size:12px;color:#888;text-align:center}@media print{body{margin:0;padding:20px}}</style></head><body>
+<h1>Paberin Creations</h1><div class="brand">ORDER RECEIPT</div><table>
+<tr><td>Order Number</td><td style="font-family:monospace">${num}</td></tr>
+<tr><td>Service</td><td>${svc}</td></tr>
+<tr><td>Customer</td><td>${name || '—'}</td></tr>
+<tr><td>Phone</td><td>${phone || '—'}</td></tr>
+<tr><td>Email</td><td>${email || '—'}</td></tr>
+<tr><td>Date</td><td>${date}</td></tr>
+<tr><td>Status</td><td style="color:#16a34a;font-weight:600">PAID</td></tr>
+<tr class="total"><td>Total</td><td>${total}</td></tr></table>
+<div class="footer">Thank you for your order!<br>Paberin Creations · Wempco Rd, Ogba, Ikeja, Lagos</div></body></html>`;
+    const w = window.open('', '_blank', 'width=500,height=700');
+    if (w) { w.document.write(html); w.document.close(); w.onload = () => w.print(); }
+  };
 
   return (
     <div className="max-w-[87.5rem] mx-auto px-4 sm:px-6 md:px-10 py-12 sm:py-16 md:py-24">
@@ -153,78 +164,49 @@ function CompleteInner() {
             Payment Successful<span className="text-[#FF5C00]">.</span>
           </h1>
           <p className="text-base text-[#666666] mb-8">
-            Your order <span className="font-mono text-black">{order.orderNumber}</span> has been confirmed and production has begun.
+            Your order{order ? <span> <span className="font-mono text-black">{order.orderNumber}</span></span> : ''} has been confirmed and production has begun.
           </p>
 
           {/* Order Summary Card */}
-          <div className="card-premium p-6 mb-8">
-            <div className="grid grid-cols-2 gap-4 text-sm mb-6">
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">Service</p>
-                <p className="text-black font-bold">{order.serviceLabel}</p>
-              </div>
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">Quantity</p>
-                <p className="text-black">{order.quantity}</p>
-              </div>
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">Total Paid</p>
-                <p className="text-black font-bold">{formatNaira(order.totalAmount)}</p>
-              </div>
-              <div>
-                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">SLA</p>
-                <p className="text-black">{order.sla}</p>
-              </div>
-            </div>
-
-            {/* Order State Badge */}
-            <div className="mb-4">
-              <span
-                className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-medium ${orderStateClass(
-                  order.state
-                )}`}
-              >
-                <span className="w-2 h-2 rounded-full bg-current"></span>
-                {formatOrderState(order.state)}
-              </span>
-            </div>
-
-            {/* Timeline Preview */}
-            {order.timeline && order.timeline.length > 0 && (
-              <div className="mt-6 pt-6 border-t border-[#EAEAEA]">
-                <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">
-                  Activity
-                </p>
-                <div className="space-y-2 text-xs">
-                  {order.timeline.slice(0, 3).map((t, i) => (
-                    <div key={i} className="flex items-start gap-2">
-                      <span className="w-2 h-2 rounded-full bg-[#FF5C00] mt-1.5"></span>
-                      <div>
-                        <p className="text-black">{formatOrderState(t.state)}</p>
-                        <p className="text-[#888888]">{formatDate(t.timestamp)}</p>
-                      </div>
-                    </div>
-                  ))}
-                  {order.timeline.length > 3 && (
-                    <p className="text-[#FF5C00] mt-2">… and {order.timeline.length - 3} more</p>
-                  )}
+          {order && (
+            <div className="card-premium p-6 mb-8">
+              <div className="grid grid-cols-2 gap-4 text-sm mb-6">
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">Service</p>
+                  <p className="text-black font-bold">{order.serviceLabel}</p>
+                </div>
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">Customer</p>
+                  <p className="text-black">{order.customerName}</p>
+                </div>
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">Total Paid</p>
+                  <p className="text-black font-bold">{formatNaira(order.totalAmount)}</p>
+                </div>
+                <div>
+                  <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">SLA</p>
+                  <p className="text-black">{order.sla}</p>
                 </div>
               </div>
-            )}
-          </div>
 
-          {/* Actions */}
-          <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Link
-              href={`/track?id=${encodeURIComponent(order.orderNumber)}`}
-              className="btn-primary"
-            >
-              Track Order
-            </Link>
-            <Link href="/dashboard" className="btn-outline">
+              <div className="mb-4">
+                <span className={`inline-flex items-center gap-2 px-4 py-2 rounded-full border text-sm font-medium ${orderStateClass(order.state)}`}>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
+                  {formatOrderState(order.state)}
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            <button onClick={printReceipt} className="btn-outline">
+              🖨️ Print / Save Receipt (PDF)
+            </button>
+            <Link href="/dashboard" className="btn-primary">
               View Dashboard
             </Link>
-            <Link href="/" className="btn-outline">
+            <Link href="/order" className="btn-primary">
               Place Another Order
             </Link>
           </div>
@@ -232,6 +214,7 @@ function CompleteInner() {
       </ScrollReveal>
     </div>
   );
+
 }
 
 export default function OrderComplete() {

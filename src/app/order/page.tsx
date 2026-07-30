@@ -39,7 +39,7 @@ interface FormState {
   designFileUrl: string;
   designFileName: string;
   customerNotes: string;
-  deliveryMethod: 'PICKUP' | 'DELIVERY';
+  deliveryMethod: 'PICKUP' | 'LOCAL_DELIVERY';
   deliveryAddress: string;
   referralCode: string;
   customerName: string;
@@ -85,6 +85,7 @@ function OrderPageInner() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
+  const [fileData, setFileData] = useState<string | null>(null); // base64 for upload
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Prefill from auth profile
@@ -156,7 +157,7 @@ function OrderPageInner() {
         quantity: form.quantity,
         sla: form.sla,
         deliveryMethod: form.deliveryMethod,
-        deliveryDistanceKm: form.deliveryMethod === 'DELIVERY' && form.deliveryAddress ? 10 : undefined,
+        deliveryDistanceKm: form.deliveryMethod === 'LOCAL_DELIVERY' && form.deliveryAddress ? 10 : undefined,
         referralCode: form.referralCode || undefined,
         isFirstTimeCustomer: customer?.isNew || false,
       });
@@ -210,20 +211,18 @@ function OrderPageInner() {
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // We can't actually upload — store the file name and prompt the user
-    // to share a public URL (Drive / Dropbox / WeTransfer). The admin team
-    // will follow up via email if needed.
     update('designFileName', file.name);
-    if (!form.designFileUrl) {
-      update('designFileUrl', '');
-    }
+    // Read file as base64 for Cloudinary upload
+    const reader = new FileReader();
+    reader.onload = () => setFileData(reader.result as string);
+    reader.readAsDataURL(file);
   };
 
   const canProceed = (): boolean => {
     if (step === 1) return !!form.serviceType;
     if (step === 2) return form.quantity > 0 && (!!form.designFileUrl || !!form.designFileName || !!form.customerNotes);
     if (step === 3) {
-      if (form.deliveryMethod === 'DELIVERY') return !!form.deliveryAddress.trim();
+      if (form.deliveryMethod === 'LOCAL_DELIVERY') return !!form.deliveryAddress.trim();
       return true;
     }
     if (step === 4) {
@@ -256,6 +255,26 @@ function OrderPageInner() {
     setError(null);
     setSubmitting(true);
     try {
+      // Step 0: Upload design file to Cloudinary if present
+      let designFileUrl = form.designFileUrl || undefined;
+      if (fileData) {
+        try {
+          const API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
+          const uploadRes = await fetch(`${API_URL}/api/upload`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file: fileData, folder: 'paberin-designs' }),
+          });
+          const uploadData = await uploadRes.json();
+          if (!uploadRes.ok) throw new Error(uploadData?.error?.message || 'Upload failed');
+          designFileUrl = uploadData.data?.url;
+        } catch (uploadErr: any) {
+          setError(`File upload failed: ${uploadErr.message}`);
+          setSubmitting(false);
+          return;
+        }
+      }
+
       const order = await api.createOrder({
         serviceType: form.serviceType,
         quantity: form.quantity,
@@ -264,8 +283,8 @@ function OrderPageInner() {
         customerPhone: form.customerPhone,
         customerEmail: form.customerEmail,
         deliveryMethod: form.deliveryMethod,
-        deliveryAddress: form.deliveryMethod === 'DELIVERY' ? form.deliveryAddress : undefined,
-        designFileUrl: form.designFileUrl || undefined,
+        deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
+        designFileUrl,
         customerNotes: [form.customerNotes, form.designFileName ? `Design file: ${form.designFileName}` : ''].filter(Boolean).join('\n\n'),
         referralCode: form.referralCode || undefined,
         isFirstTimeCustomer: customer?.isNew || false,
@@ -280,7 +299,7 @@ function OrderPageInner() {
           orderNumber: order.orderNumber,
           brand: 'PABERIN',
           metadata: { orderNumber: order.orderNumber, brand: 'PABERIN' },
-          callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete`,
+          callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete?order=${order.orderNumber}`,
         });
         // Redirect to Paystack checkout
         if ((pay as any).authorization_url) {
@@ -669,9 +688,9 @@ function OrderPageInner() {
                       </p>
                     </button>
                     <button
-                      onClick={() => update('deliveryMethod', 'DELIVERY')}
+                      onClick={() => update('deliveryMethod', 'LOCAL_DELIVERY')}
                       className={`card text-left transition-all ${
-                        form.deliveryMethod === 'DELIVERY'
+                        form.deliveryMethod === 'LOCAL_DELIVERY'
                           ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]'
                           : ''
                       }`}
@@ -683,7 +702,7 @@ function OrderPageInner() {
                     </button>
                   </div>
 
-                  {form.deliveryMethod === 'DELIVERY' && (
+                  {form.deliveryMethod === 'LOCAL_DELIVERY' && (
                     <div className="space-y-2">
                       <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
                         <span className="text-[#FF5C00]">01</span> Delivery Address
