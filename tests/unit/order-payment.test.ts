@@ -114,8 +114,8 @@ describe('Order Page Payment Flow', () => {
     (api.createOrder as any).mockResolvedValueOnce(mockOrder)
 
     const mockPayResponse = {
-      authorization_url: 'https://paystack.com/authorize?ref=PAB-002',
-      access_code: 'ACC456',
+      authorizationUrl: 'https://paystack.com/authorize?ref=PAB-002',
+      accessCode: 'ACC456',
       reference: 'PAB-002',
     } as PaymentInitResponse
     (api.initializePayment as any).mockResolvedValueOnce(mockPayResponse)
@@ -196,8 +196,8 @@ describe('Order Page Payment Flow', () => {
   it('should include brand in payment initialization request', async () => {
     // Arrange
     const mockPayResponse = {
-      authorization_url: 'https://paystack.com/authorize?ref=test',
-      access_code: 'ACC123',
+      authorizationUrl: 'https://paystack.com/authorize?ref=test',
+      accessCode: 'ACC123',
       reference: 'TEST',
     } as PaymentInitResponse
     (api.initializePayment as any).mockResolvedValueOnce(mockPayResponse)
@@ -255,8 +255,8 @@ describe('Order Page Payment Flow', () => {
     (api.createOrder as any).mockResolvedValueOnce(mockOrder)
 
     const mockPayResponse = {
-      authorization_url: 'https://paystack.com/authorize?ref=PAB-005',
-      access_code: 'ACC789',
+      authorizationUrl: 'https://paystack.com/authorize?ref=PAB-005',
+      accessCode: 'ACC789',
       reference: 'PAB-005',
     } as PaymentInitResponse
     (api.initializePayment as any).mockResolvedValueOnce(mockPayResponse)

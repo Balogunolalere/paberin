@@ -23,8 +23,8 @@ describe('api.initializePayment', () => {
   it('should call apiFetch with correct endpoint and method', async () => {
     // Arrange
     const mockResponse = {
-      authorization_url: 'https://paystack.com/authorize?ref=test123',
-      access_code: 'ACC123',
+      authorizationUrl: 'https://paystack.com/authorize?ref=test123',
+      accessCode: 'ACC123',
       reference: 'TEST-ORDER-001',
     } as PaymentInitResponse
     ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
@@ -55,8 +55,8 @@ describe('api.initializePayment', () => {
   it('should include brand in the request body even if not provided', async () => {
     // Arrange
     const mockResponse = {
-      authorization_url: 'https://paystack.com/authorize?ref=test123',
-      access_code: 'ACC123',
+      authorizationUrl: 'https://paystack.com/authorize?ref=test123',
+      accessCode: 'ACC123',
       reference: 'TEST-ORDER-002',
     } as PaymentInitResponse
     ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
@@ -78,8 +78,8 @@ describe('api.initializePayment', () => {
   it('should convert amount correctly in request', async () => {
     // Arrange
     const mockResponse = {
-      authorization_url: 'https://paystack.com/authorize?ref=test123',
-      access_code: 'ACC123',
+      authorizationUrl: 'https://paystack.com/authorize?ref=test123',
+      accessCode: 'ACC123',
       reference: 'TEST-ORDER-003',
     } as PaymentInitResponse
     ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
@@ -114,8 +114,8 @@ describe('api.initializePayment', () => {
   it('should include metadata in request when provided', async () => {
     // Arrange
     const mockResponse = {
-      authorization_url: 'https://paystack.com/authorize?ref=test123',
-      access_code: 'ACC123',
+      authorizationUrl: 'https://paystack.com/authorize?ref=test123',
+      accessCode: 'ACC123',
       reference: 'TEST-ORDER-005',
     } as PaymentInitResponse
     ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)

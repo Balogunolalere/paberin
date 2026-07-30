@@ -304,10 +304,13 @@ function OrderPageInner() {
           callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete?order=${order.orderNumber}`,
         });
         // Redirect to Paystack checkout
-        if ((pay as any).authorization_url) {
-          window.location.href = (pay as any).authorization_url;
+        const payData = pay as any;
+        const authUrl = payData?.authorizationUrl || payData?.authorization_url;
+        if (authUrl) {
+          window.location.href = authUrl;
           return;
         }
+        console.warn('Payment init succeeded but no authorization URL returned:', payData);
       } catch (payErr) {
         // Payment init failed — fall through to success screen with manual payment note
         console.warn('Payment init failed:', payErr);

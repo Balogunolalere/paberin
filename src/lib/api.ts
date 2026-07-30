@@ -127,8 +127,8 @@ export interface ReferralValidation {
 }
 
 export interface PaymentInitResponse {
-  authorization_url: string;
-  access_code: string;
+  authorizationUrl: string;
+  accessCode: string;
   reference: string;
 }
 
