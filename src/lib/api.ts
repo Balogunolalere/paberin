@@ -300,7 +300,7 @@ export const api = {
 
   /** Track a single order by order number. */
   trackOrder: (orderNumber: string) =>
-    apiFetch<Order>(`/api/orders?id=${encodeURIComponent(orderNumber)}`),
+    apiFetch<Order>(`/api/orders?id=${encodeURIComponent(orderNumber)}&brand=PABERIN`),
 
   /** Fetch all orders for a phone number (used by login + dashboard). */
   getOrdersByPhone: (phone: string) =>

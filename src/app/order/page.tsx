@@ -287,7 +287,7 @@ function OrderPageInner() {
         deliveryMethod: form.deliveryMethod,
         deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
         designFileUrl,
-        customerNotes: [form.customerNotes, form.designFileName ? `Design file: ${form.designFileName}` : ''].filter(Boolean).join('\n\n'),
+        customerNotes: [form.customerNotes, form.designFileName ? `--- Design file: ${form.designFileName} ---` : ''].filter(Boolean).join('\n\n'),
         referralCode: form.referralCode || undefined,
         isFirstTimeCustomer: customer?.isNew || false,
       });
