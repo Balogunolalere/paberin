@@ -458,11 +458,14 @@ export const api = {
     orderNumber: string;
     brand?: 'SKYAL' | 'PABERIN';
     metadata?: Record<string, unknown>;
-  }) =>
-    apiFetch<PaymentInitResponse>('/api/payment/initialize', {
+    callbackUrl?: string // Optional override for callback URL
+  }) => {
+    const callbackUrl = body.callbackUrl || `${process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app'}/order/complete`;
+    return apiFetch<PaymentInitResponse>('/api/payment/initialize', {
       method: 'POST',
-      body: JSON.stringify(body),
-    }),
+      body: JSON.stringify({ ...body, callbackUrl }),
+    });
+  },
 
   /** Verify a Paystack transaction by reference. */
   verifyPayment: (reference: string) =>

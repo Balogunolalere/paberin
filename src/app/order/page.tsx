@@ -280,6 +280,7 @@ function OrderPageInner() {
           orderNumber: order.orderNumber,
           brand: 'PABERIN',
           metadata: { orderNumber: order.orderNumber, brand: 'PABERIN' },
+          callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete`,
         });
         // Redirect to Paystack checkout
         if ((pay as any).authorization_url) {
