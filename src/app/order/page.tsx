@@ -255,7 +255,7 @@ function OrderPageInner() {
     setError(null);
     setSubmitting(true);
     try {
-      // Step 0: Upload design file to Cloudinary if present
+      // Step 0: Upload design file to Cloudinary if present (best-effort, non-blocking)
       let designFileUrl = form.designFileUrl || undefined;
       if (fileData) {
         try {
@@ -265,13 +265,15 @@ function OrderPageInner() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ file: fileData, folder: 'paberin-designs' }),
           });
-          const uploadData = await uploadRes.json();
-          if (!uploadRes.ok) throw new Error(uploadData?.error?.message || 'Upload failed');
-          designFileUrl = uploadData.data?.url;
-        } catch (uploadErr: any) {
-          setError(`File upload failed: ${uploadErr.message}`);
-          setSubmitting(false);
-          return;
+          // Only parse JSON if response looks like JSON (not an HTML error page)
+          const contentType = uploadRes.headers.get('content-type') || '';
+          if (uploadRes.ok && contentType.includes('application/json')) {
+            const uploadData = await uploadRes.json();
+            if (uploadData.data?.url) designFileUrl = uploadData.data.url;
+          }
+          // If upload fails, silently continue — file name is in notes
+        } catch {
+          // File upload is optional — continue without it
         }
       }
 
