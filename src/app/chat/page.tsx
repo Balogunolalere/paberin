@@ -12,7 +12,7 @@ import {
 } from '@/lib/api';
 
 /**
- * Paberin AI Chat — wired to /api/skyal/chat with brand='paberin'.
+ * Paberin AI Chat — wired to /api/chat with Agnes 2.0 Flash.
  *
  * Talk to Paberin's AI assistant about materials, lead times, quotes,
  * delivery, anything. If the assistant builds a quote during the chat,
@@ -25,6 +25,13 @@ interface UIMessage extends ChatMessage {
   quote?: ChatResponse['quote'];
   renderOrderNow?: boolean;
 }
+
+const WELCOME_MSG: UIMessage = {
+  id: 'welcome',
+  role: 'assistant',
+  content:
+    "Hello — I'm Paberin's assistant. Ask me about materials, lead times, pricing, or your existing order. I can also build a quote for you right here.",
+};
 
 const SUGGESTIONS = [
   'What materials do you cut?',
@@ -39,15 +46,39 @@ function uid() {
   return `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+/**
+ * Lightweight markdown renderer — handles **bold**, *italic*, `code`,
+ * newlines → <br/>, and https:// links without external dependencies.
+ */
+function renderMarkdown(text: string): React.ReactNode[] {
+  if (!text) return [];
+  const parts: React.ReactNode[] = [];
+  // Split by newlines first, then process each line
+  const lines = text.split('\n');
+  lines.forEach((line, li) => {
+    if (li > 0) parts.push(<br key={`br-${li}`} />);
+    // Process inline formatting per line
+    const tokens = line.split(/(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|https?:\/\/\S+)/g);
+    tokens.forEach((tok, ti) => {
+      if (!tok) return;
+      if (tok.startsWith('**') && tok.endsWith('**')) {
+        parts.push(<strong key={`${li}-${ti}`}>{tok.slice(2, -2)}</strong>);
+      } else if (tok.startsWith('*') && tok.endsWith('*') && !tok.startsWith('**')) {
+        parts.push(<em key={`${li}-${ti}`}>{tok.slice(1, -1)}</em>);
+      } else if (tok.startsWith('`') && tok.endsWith('`')) {
+        parts.push(<code key={`${li}-${ti}`} className="font-mono text-[0.9em] bg-[#EAEAEA] px-1 rounded">{tok.slice(1, -1)}</code>);
+      } else if (/^https?:\/\//.test(tok)) {
+        parts.push(<a key={`${li}-${ti}`} href={tok} target="_blank" rel="noopener noreferrer" className="text-[#FF5C00] underline hover:no-underline">{tok}</a>);
+      } else {
+        parts.push(<span key={`${li}-${ti}`}>{tok}</span>);
+      }
+    });
+  });
+  return parts;
+}
+
 function ChatContent() {
-  const [messages, setMessages] = useState<UIMessage[]>([
-    {
-      id: 'welcome',
-      role: 'assistant',
-      content:
-        "Hello — I'm Paberin's assistant. Ask me about materials, lead times, pricing, or your existing order. I can also build a quote for you right here.",
-    },
-  ]);
+  const [messages, setMessages] = useState<UIMessage[]>([WELCOME_MSG]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +94,16 @@ function ChatContent() {
       el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
     }
   }, [messages]);
+
+  // Start a brand new chat
+  const newChat = useCallback(() => {
+    setMessages([WELCOME_MSG]);
+    setPendingQuote(null);
+    setSessionId(undefined);
+    setError(null);
+    setInput('');
+    inputRef.current?.focus();
+  }, []);
 
   const send = useCallback(
     async (text: string) => {

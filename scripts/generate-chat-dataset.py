@@ -27,7 +27,7 @@ WHATSAPP_DIR = "/tmp/paberin_chats/all"
 OUTPUT_DIR = Path("/home/doombuggy_/Projects/paberin/tests/datasets")
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "sk-lgKKJlFUbZ56jRAQoXBCvYDlx66hOXv4AndXGVvpL3l2cYd3")
+AGNES_API_KEY = os.environ.get("AGNES_API_KEY", "")
 AGNES_API_URL = "https://apihub.agnes-ai.com/v1/chat/completions"
 
 # How many messages to send to Agnes for augmentation (0 = all)
