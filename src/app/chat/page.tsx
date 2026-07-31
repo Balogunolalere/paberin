@@ -189,6 +189,19 @@ function ChatContent() {
           <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#999] hidden sm:inline">
             / Assistant
           </span>
+          <div className="ml-auto">
+            <button
+              onClick={newChat}
+              className="text-xs font-mono uppercase tracking-[0.1em] text-[#888888] hover:text-[#FF5C00] transition-colors flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-[#EAEAEA] hover:border-[#FF5C00]"
+              aria-label="Start new chat"
+              title="Start a fresh conversation"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M2 2h10v10H2zM7 5v4M5 7h4" />
+              </svg>
+              <span className="hidden sm:inline">New Chat</span>
+            </button>
+          </div>
         </div>
       </ScrollReveal>
 
@@ -220,9 +233,9 @@ function ChatContent() {
                 >
                   <div
                     className={`max-w-[85%] sm:max-w-[75%] ${
-                      m.role === 'user'
-                        ? 'bg-[#FF5C00] text-white rounded-2xl rounded-br-sm'
-                        : 'bg-[#F7F7F7] text-black rounded-2xl rounded-bl-sm border border-[#EAEAEA]'
+                      m.rdiv className="text-sm leading-relaxed whitespace-pre-wrap">
+                          {renderMarkdown(m.content)}
+                        </divbg-[#F7F7F7] text-black rounded-2xl rounded-bl-sm border border-[#EAEAEA]'
                     } px-4 py-3`}
                   >
                     {m.pending ? (
