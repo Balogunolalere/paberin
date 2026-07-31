@@ -233,9 +233,9 @@ function ChatContent() {
                 >
                   <div
                     className={`max-w-[85%] sm:max-w-[75%] ${
-                      m.rdiv className="text-sm leading-relaxed whitespace-pre-wrap">
-                          {renderMarkdown(m.content)}
-                        </divbg-[#F7F7F7] text-black rounded-2xl rounded-bl-sm border border-[#EAEAEA]'
+                      m.role === 'user'
+                        ? 'bg-[#FF5C00] text-white rounded-2xl rounded-br-sm'
+                        : 'bg-[#F7F7F7] text-black rounded-2xl rounded-bl-sm border border-[#EAEAEA]'
                     } px-4 py-3`}
                   >
                     {m.pending ? (
@@ -246,9 +246,9 @@ function ChatContent() {
                       </div>
                     ) : (
                       <>
-                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                          {m.content}
-                        </p>
+                        <div className="text-sm leading-relaxed whitespace-pre-wrap">
+                          {renderMarkdown(m.content)}
+                        </div>
                         {m.quote && (
                           <div className="mt-3 pt-3 border-t border-current/20">
                             <p className="font-mono text-[10px] uppercase tracking-[0.12em] opacity-70 mb-1">

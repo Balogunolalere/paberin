@@ -120,7 +120,9 @@ function OrderPageInner() {
   }, [searchParams, servicesLoading, services]);
 
   // Chat quote prefill: when coming from /chat with ?from=chat&quote={...}
-  // pre-fill service type, quantity, SLA, and delivery from the AI quote.
+  // pre-fill as much as possible from the AI quote — even if the exact
+  // service isn't in the catalog, prefill quantity, SLA, delivery, and
+  // customer notes so the customer doesn't have to re-enter everything.
   const chatPrefillApplied = useRef(false);
   useEffect(() => {
     if (chatPrefillApplied.current) return;
@@ -131,24 +133,36 @@ function OrderPageInner() {
     try {
       const q = JSON.parse(decodeURIComponent(quoteRaw));
       const breakdown = q?.breakdown;
-      // Try to match the service label to a real service
-      const serviceLabel = breakdown?.serviceLabel || '';
-      const match = services.find(
-        (s) => s.label.toLowerCase() === serviceLabel.toLowerCase()
-      );
+      const serviceLabel = (breakdown?.serviceLabel || '').toLowerCase().trim();
+      const serviceType = (breakdown?.serviceType || q?.service_type || '').toLowerCase().trim();
+
+      // Try to match: 1) exact label, 2) partial label, 3) service type key, 4) fuzzy match
+      let match = services.find(s => s.label.toLowerCase() === serviceLabel);
+      if (!match) match = services.find(s => s.label.toLowerCase().includes(serviceLabel) || serviceLabel.includes(s.label.toLowerCase()));
+      if (!match && serviceType) match = services.find(s => s.type.toLowerCase() === serviceType);
+      if (!match) match = services.find(s => s.type.toLowerCase().includes(serviceType) || serviceType.includes(s.type.toLowerCase()));
+
+      // Build notes from whatever the AI discussed
+      const notes = [
+        serviceLabel ? `AI discussed: ${breakdown?.serviceLabel || serviceLabel}` : '',
+        breakdown?.lead_time ? `Lead time: ${breakdown.lead_time}` : '',
+        breakdown?.notes ? breakdown.notes : '',
+      ].filter(Boolean).join('. ');
+
       chatPrefillApplied.current = true;
       setForm((prev) => ({
         ...prev,
         serviceType: match?.type || prev.serviceType,
-        serviceName: match?.label || prev.serviceName,
+        serviceName: match?.label || (breakdown?.serviceLabel || prev.serviceName),
         quantity: breakdown?.quantity || q?.quantity || 1,
-        sla: q?.sla || 'Standard',
+        sla: (breakdown?.sla || q?.sla || 'Standard') as 'Standard' | 'Express',
         deliveryMethod: (breakdown?.deliveryFee || 0) > 0 ? 'LOCAL_DELIVERY' : 'PICKUP',
+        customerNotes: notes || prev.customerNotes,
       }));
-      // Jump to step 2 (Details) so they can review the quote and continue
-      if (match) setStep(2);
+      // Always jump to step 2 so they can review and adjust
+      setStep(2);
     } catch {
-      // Quote parse failed — ignore, let user fill manually
+      // Quote parse failed — let user fill manually
     }
   }, [searchParams, servicesLoading, services]);
 
