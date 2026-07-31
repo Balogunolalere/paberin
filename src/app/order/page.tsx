@@ -36,8 +36,6 @@ interface FormState {
   serviceName: string;
   quantity: number;
   sla: 'Standard' | 'Express';
-  designFileUrl: string;
-  designFileName: string;
   customerNotes: string;
   deliveryMethod: 'PICKUP' | 'LOCAL_DELIVERY';
   deliveryAddress: string;
@@ -52,8 +50,6 @@ const initialState: FormState = {
   serviceName: '',
   quantity: 1,
   sla: 'Standard',
-  designFileUrl: '',
-  designFileName: '',
   customerNotes: '',
   deliveryMethod: 'PICKUP',
   deliveryAddress: '',
@@ -85,7 +81,7 @@ function OrderPageInner() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
-  const [fileData, setFileData] = useState<string | null>(null); // base64 for upload
+  const [uploadFiles, setUploadFiles] = useState<{ name: string; data: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Prefill from auth profile
@@ -209,18 +205,27 @@ function OrderPageInner() {
   };
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    update('designFileName', file.name);
-    // Read file as base64 for Cloudinary upload
-    const reader = new FileReader();
-    reader.onload = () => setFileData(reader.result as string);
-    reader.readAsDataURL(file);
+    const selectedFiles = Array.from(e.target.files || []);
+    if (selectedFiles.length === 0) { setUploadFiles([]); return; }
+    if (selectedFiles.length > 5) { alert('Maximum 5 files allowed.'); return; }
+    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    const newFiles: { name: string; data: string }[] = [];
+    let loaded = 0;
+    for (const file of selectedFiles) {
+      if (file.size > MAX_FILE_SIZE) { alert(`${file.name} exceeds 10MB limit.`); continue; }
+      const reader = new FileReader();
+      reader.onload = () => {
+        newFiles.push({ name: file.name, data: reader.result as string });
+        loaded++;
+        if (loaded >= newFiles.length) setUploadFiles([...newFiles]);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const canProceed = (): boolean => {
     if (step === 1) return !!form.serviceType;
-    if (step === 2) return form.quantity > 0 && (!!form.designFileUrl || !!form.designFileName || !!form.customerNotes);
+    if (step === 2) return form.quantity > 0 && (uploadFiles.length > 0 || !!form.customerNotes);
     if (step === 3) {
       if (form.deliveryMethod === 'LOCAL_DELIVERY') return !!form.deliveryAddress.trim();
       return true;
@@ -255,26 +260,47 @@ function OrderPageInner() {
     setError(null);
     setSubmitting(true);
     try {
-      // Step 0: Upload design file to Cloudinary if present (best-effort, non-blocking)
-      let designFileUrl = form.designFileUrl || undefined;
-      if (fileData) {
+      // Step 0: Upload design files to Cloudinary (best-effort, non-blocking)
+      const MAX_FILES = 5;
+      const MAX_FILE_SIZE = 10 * 1024 * 1024;
+      const MAX_TOTAL_SIZE = 25 * 1024 * 1024;
+
+      let designFileUrl: string | undefined;
+      const uploadedFiles: { url: string; publicId: string; name: string }[] = [];
+
+      if (uploadFiles.length > MAX_FILES) {
+        setError(`Maximum ${MAX_FILES} files allowed.`);
+        setSubmitting(false);
+        return;
+      }
+      const totalSize = uploadFiles.reduce((s, f) => s + f.data.length, 0);
+      if (totalSize > MAX_TOTAL_SIZE) {
+        setError(`Total file size (${(totalSize / 1024 / 1024).toFixed(1)}MB) exceeds the 25MB limit.`);
+        setSubmitting(false);
+        return;
+      }
+
+      for (const file of uploadFiles) {
+        if (file.data.length > MAX_FILE_SIZE) continue;
         try {
-          const API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
-          const uploadRes = await fetch(`${API_URL}/api/upload`, {
+          const API_URL2 = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
+          const uploadRes = await fetch(`${API_URL2}/api/upload`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file: fileData, folder: 'paberin-designs' }),
+            body: JSON.stringify({ file: file.data, folder: 'paberin-designs' }),
           });
-          // Only parse JSON if response looks like JSON (not an HTML error page)
-          const contentType = uploadRes.headers.get('content-type') || '';
-          if (uploadRes.ok && contentType.includes('application/json')) {
+          const ct = uploadRes.headers.get('content-type') || '';
+          if (uploadRes.ok && ct.includes('application/json')) {
             const uploadData = await uploadRes.json();
-            if (uploadData.data?.url) designFileUrl = uploadData.data.url;
+            if (uploadData.data?.url) {
+              uploadedFiles.push({ url: uploadData.data.url, publicId: uploadData.data.publicId || '', name: file.name });
+            }
           }
-          // If upload fails, silently continue — file name is in notes
-        } catch {
-          // File upload is optional — continue without it
-        }
+        } catch { /* individual upload failure is non-blocking */ }
+      }
+
+      if (uploadedFiles.length > 0) {
+        designFileUrl = JSON.stringify(uploadedFiles.map(f => ({ url: f.url, publicId: f.publicId, name: f.name })));
       }
 
       const order = await api.createOrder({
@@ -287,7 +313,7 @@ function OrderPageInner() {
         deliveryMethod: form.deliveryMethod,
         deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
         designFileUrl,
-        customerNotes: [form.customerNotes, form.designFileName ? `--- Design file: ${form.designFileName} ---` : ''].filter(Boolean).join('\n\n'),
+        customerNotes: [form.customerNotes, uploadFiles.length > 0 ? `--- Design files: ${uploadFiles.map(f => f.name).join(', ')} ---` : ''].filter(Boolean).join('\n\n'),
         referralCode: form.referralCode || undefined,
         isFirstTimeCustomer: customer?.isNew || false,
       });
@@ -615,15 +641,16 @@ function OrderPageInner() {
                     </div>
                   </div>
 
-                  {/* Design file */}
+                  {/* Design files */}
                   <div className="space-y-2">
                     <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
-                      <span className="text-[#FF5C00]">03</span> Design File
+                      <span className="text-[#FF5C00]">03</span> Design Files <span className="lowercase text-[10px]">(up to 5, max 10MB each)</span>
                     </label>
-                    <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="flex flex-col gap-2">
                       <input
                         ref={fileInputRef}
                         type="file"
+                        multiple
                         accept=".svg,.ai,.eps,.dxf,.pdf,.png,.jpg,.jpeg"
                         onChange={handleFile}
                         className="hidden"
@@ -633,15 +660,26 @@ function OrderPageInner() {
                         onClick={() => fileInputRef.current?.click()}
                         className="btn-outline"
                       >
-                        {form.designFileName ? '✓ ' + form.designFileName : 'Choose File'}
+                        {uploadFiles.length > 0
+                          ? `✓ ${uploadFiles.length} file${uploadFiles.length > 1 ? 's' : ''} selected`
+                          : 'Choose Files'}
                       </button>
-                      <input
-                        type="url"
-                        value={form.designFileUrl}
-                        onChange={(e) => update('designFileUrl', e.target.value)}
-                        placeholder="Or paste a public URL (Drive, Dropbox…)"
-                        className="form-input flex-1"
-                      />
+                      {uploadFiles.length > 0 && (
+                        <div className="space-y-1">
+                          {uploadFiles.map((f, i) => (
+                            <div key={i} className="flex items-center gap-2 text-xs text-[#888888]">
+                              <span className="font-mono text-[#666666]">{f.name}</span>
+                              <span>({(f.data.length / 1024).toFixed(0)}KB)</span>
+                              <button
+                                onClick={() => setUploadFiles(uploadFiles.filter((_, j) => j !== i))}
+                                className="text-[#FF5C00] hover:text-black ml-auto"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                     <p className="text-[11px] text-[#888888]">
                       Accepted: SVG, AI, EPS, DXF, PDF, PNG, JPG. We&apos;ll follow up by email if needed.
@@ -849,18 +887,17 @@ function OrderPageInner() {
                       <p className="text-xs">{form.customerEmail}</p>
                     </div>
                   </div>
-                  {(form.designFileUrl || form.designFileName || form.customerNotes) && (
+                  {(uploadFiles.length > 0 || form.customerNotes) && (
                     <div className="card">
                       <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">
                         Design & Notes
                       </p>
-                      {form.designFileName && (
-                        <p className="text-sm text-black">📎 {form.designFileName}</p>
-                      )}
-                      {form.designFileUrl && (
-                        <p className="text-xs text-[#FF5C00] truncate mt-1">
-                          {form.designFileUrl}
-                        </p>
+                      {uploadFiles.length > 0 && (
+                        <div className="space-y-1">
+                          {uploadFiles.map((f, i) => (
+                            <p key={i} className="text-sm text-black">📎 {f.name}</p>
+                          ))}
+                        </div>
                       )}
                       {form.customerNotes && (
                         <p className="text-xs text-[#666666] mt-2 whitespace-pre-wrap">

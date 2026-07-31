@@ -309,9 +309,9 @@ export const api = {
       body: JSON.stringify({ phone }),
     }),
 
-  /** Send a chat message to the Paberin LLM (Agnes 2.0). */
+  /** Send a chat message to the Paberin LLM (Agnes 2.0 via admin backend). */
   sendChat: (body: ChatRequestBody) =>
-    apiFetch<ChatResponse>('/api/chat', {
+    apiFetch<ChatResponse>('/api/skyal/chat', {
       method: 'POST',
       body: JSON.stringify({ ...body, brand: 'paberin' }),
     }),
