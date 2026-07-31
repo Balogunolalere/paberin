@@ -309,12 +309,27 @@ export const api = {
       body: JSON.stringify({ phone }),
     }),
 
-  /** Send a chat message to the Paberin LLM (Agnes 2.0 via admin backend). */
-  sendChat: (body: ChatRequestBody) =>
-    apiFetch<ChatResponse>('/api/skyal/chat', {
+  /** Send a chat message to the Paberin AI assistant (Agnes 2.0 Flash via local route).
+   *  Uses the local /api/chat endpoint which has the complete Paberin service catalog
+   *  and structured [QUOTE] block extraction. */
+  sendChat: async (body: ChatRequestBody): Promise<ChatResponse> => {
+    const res = await fetch('/api/chat', {
       method: 'POST',
-      body: JSON.stringify({ ...body, brand: 'paberin' }),
-    }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      cache: 'no-store',
+    });
+
+    let data: any = null;
+    try { data = await res.json(); } catch { /* non-JSON fallthrough */ }
+
+    if (!res.ok) {
+      const message = data?.message || data?.error || `Chat request failed (${res.status})`;
+      throw new Error(message);
+    }
+
+    return data as ChatResponse;
+  },
 
   /** Create an escalation ticket for an order. */
   createEscalation: (body: CreateEscalationBody) =>

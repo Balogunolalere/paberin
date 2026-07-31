@@ -119,6 +119,39 @@ function OrderPageInner() {
     setStep(2);
   }, [searchParams, servicesLoading, services]);
 
+  // Chat quote prefill: when coming from /chat with ?from=chat&quote={...}
+  // pre-fill service type, quantity, SLA, and delivery from the AI quote.
+  const chatPrefillApplied = useRef(false);
+  useEffect(() => {
+    if (chatPrefillApplied.current) return;
+    if (servicesLoading || services.length === 0) return;
+    const from = searchParams.get('from');
+    const quoteRaw = searchParams.get('quote');
+    if (from !== 'chat' || !quoteRaw) return;
+    try {
+      const q = JSON.parse(decodeURIComponent(quoteRaw));
+      const breakdown = q?.breakdown;
+      // Try to match the service label to a real service
+      const serviceLabel = breakdown?.serviceLabel || '';
+      const match = services.find(
+        (s) => s.label.toLowerCase() === serviceLabel.toLowerCase()
+      );
+      chatPrefillApplied.current = true;
+      setForm((prev) => ({
+        ...prev,
+        serviceType: match?.type || prev.serviceType,
+        serviceName: match?.label || prev.serviceName,
+        quantity: breakdown?.quantity || q?.quantity || 1,
+        sla: q?.sla || 'Standard',
+        deliveryMethod: (breakdown?.deliveryFee || 0) > 0 ? 'LOCAL_DELIVERY' : 'PICKUP',
+      }));
+      // Jump to step 2 (Details) so they can review the quote and continue
+      if (match) setStep(2);
+    } catch {
+      // Quote parse failed — ignore, let user fill manually
+    }
+  }, [searchParams, servicesLoading, services]);
+
   // Fetch services on mount
   useEffect(() => {
     let cancelled = false;

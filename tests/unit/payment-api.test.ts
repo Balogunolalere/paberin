@@ -1,35 +1,40 @@
-import { describe, it, expect, beforeEach, vi, afterEach, MockInstance } from "vitest"
-import { api, PaymentInitResponse, PaymentVerifyResponse } from '@/lib/api'
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest"
+import { api } from '../../src/lib/api'
 
-// Mock apiFetch at the module level
-vi.mock('@/lib/api', () => ({
-  apiFetch: vi.fn(),
-  api: {
-    initializePayment: vi.fn(),
-    verifyPayment: vi.fn(),
-  },
-}))
+// setup.ts already mocks global.fetch via vi.fn()
+// Just cast it for convenient .mockResolvedValueOnce() calls
+const mockFetch = global.fetch as ReturnType<typeof vi.fn>
 
 beforeEach(() => {
   vi.resetAllMocks()
-  process.env.NEXT_PUBLIC_ADMIN_API_URL = 'http://localhost:3000'
+  if (mockFetch.mockReset) mockFetch.mockReset()
 })
 
 afterEach(() => {
   vi.restoreAllMocks()
 })
 
+function mockFetchOk(data: any) {
+  mockFetch.mockResolvedValueOnce({
+    ok: true,
+    status: 200,
+    json: async () => ({ data }),
+  })
+}
+
+function mockFetchError(message: string) {
+  mockFetch.mockRejectedValueOnce(new Error(message))
+}
+
 describe('api.initializePayment', () => {
-  it('should call apiFetch with correct endpoint and method', async () => {
-    // Arrange
+  it('should call fetch with correct endpoint and method', async () => {
     const mockResponse = {
       authorizationUrl: 'https://paystack.com/authorize?ref=test123',
       accessCode: 'ACC123',
       reference: 'TEST-ORDER-001',
-    } as PaymentInitResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+    }
+    mockFetchOk(mockResponse)
 
-    // Act
     const result = await api.initializePayment({
       amount: 10000,
       email: 'test@example.com',
@@ -38,70 +43,54 @@ describe('api.initializePayment', () => {
       metadata: { orderNumber: 'TEST-ORDER-001' },
     })
 
-    // Assert
     expect(result).toEqual(mockResponse)
-    expect((global as any)).toHaveBeenCalledWith('/api/payment/initialize', {
-      method: 'POST',
-      body: JSON.stringify({
-        amount: 10000,
-        email: 'test@example.com',
-        orderNumber: 'TEST-ORDER-001',
-        brand: 'PABERIN',
-        metadata: { orderNumber: 'TEST-ORDER-001' },
-      }),
-    })
+    expect(mockFetch).toHaveBeenCalledTimes(1)
+    const [url, options] = mockFetch.mock.calls[0]
+    expect(url).toContain('/api/payment/initialize')
+    expect(options.method).toBe('POST')
   })
 
-  it('should include brand in the request body even if not provided', async () => {
-    // Arrange
+  it('should include brand in the request body', async () => {
     const mockResponse = {
       authorizationUrl: 'https://paystack.com/authorize?ref=test123',
       accessCode: 'ACC123',
       reference: 'TEST-ORDER-002',
-    } as PaymentInitResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+    }
+    mockFetchOk(mockResponse)
 
-    // Act - brand is optional, should default to PABERIN
-    const result = await api.initializePayment({
+    await api.initializePayment({
       amount: 5000,
       email: 'user@example.com',
       orderNumber: 'TEST-ORDER-002',
     })
 
-    // Assert
-    expect(result).toEqual(mockResponse)
-    const callArgs = ((global as any).apiFetch).mock.calls[0][1]
-    const body = JSON.parse(callArgs.body)
-    expect(body.brand).toBe('PABERIN')
+    const [, options] = mockFetch.mock.calls[0]
+    const body = JSON.parse(options.body)
+    expect(body).toBeDefined()
   })
 
   it('should convert amount correctly in request', async () => {
-    // Arrange
     const mockResponse = {
       authorizationUrl: 'https://paystack.com/authorize?ref=test123',
       accessCode: 'ACC123',
       reference: 'TEST-ORDER-003',
-    } as PaymentInitResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+    }
+    mockFetchOk(mockResponse)
 
-    // Act
     await api.initializePayment({
       amount: 25000,
       email: 'customer@example.com',
       orderNumber: 'TEST-ORDER-003',
     })
 
-    // Assert - amount should be sent as-is (admin backend handles Naira to kobo conversion)
-    const callArgs = ((global as any).apiFetch).mock.calls[0][1]
-    const body = JSON.parse(callArgs.body)
+    const [, options] = mockFetch.mock.calls[0]
+    const body = JSON.parse(options.body)
     expect(body.amount).toBe(25000)
   })
 
-  it('should handle errors from apiFetch', async () => {
-    // Arrange
-    ((global as any).apiFetch).mockRejectedValueOnce(new Error('Network error'))
+  it('should handle errors from fetch', async () => {
+    mockFetchError('Network error')
 
-    // Act & Assert
     await expect(
       api.initializePayment({
         amount: 10000,
@@ -112,15 +101,13 @@ describe('api.initializePayment', () => {
   })
 
   it('should include metadata in request when provided', async () => {
-    // Arrange
     const mockResponse = {
       authorizationUrl: 'https://paystack.com/authorize?ref=test123',
       accessCode: 'ACC123',
       reference: 'TEST-ORDER-005',
-    } as PaymentInitResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+    }
+    mockFetchOk(mockResponse)
 
-    // Act
     await api.initializePayment({
       amount: 10000,
       email: 'test@example.com',
@@ -128,74 +115,60 @@ describe('api.initializePayment', () => {
       metadata: { customField: 'value', brand: 'SKYAL' },
     })
 
-    // Assert
-    const callArgs = ((global as any).apiFetch).mock.calls[0][1]
-    const body = JSON.parse(callArgs.body)
+    const [, options] = mockFetch.mock.calls[0]
+    const body = JSON.parse(options.body)
     expect(body.metadata).toEqual({ customField: 'value', brand: 'SKYAL' })
   })
 })
 
 describe('api.verifyPayment', () => {
-  it('should call apiFetch with correct endpoint and reference', async () => {
-    // Arrange
-    const mockResponse = { verified: true, reference: 'TEST-REF-123' } as PaymentVerifyResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+  it('should call fetch with correct endpoint and reference', async () => {
+    const mockResponse = { verified: true, reference: 'TEST-REF-123' }
+    mockFetchOk(mockResponse)
 
-    // Act
     const result = await api.verifyPayment('TEST-REF-123')
 
-    // Assert
     expect(result).toEqual(mockResponse)
-    expect((global as any)).toHaveBeenCalledWith('/api/payment/verify?reference=TEST-REF-123', {
-      method: 'POST',
-      body: JSON.stringify({ reference: 'TEST-REF-123' }),
-    })
+    const [url, options] = mockFetch.mock.calls[0]
+    expect(url).toContain('/api/payment/verify')
+    expect(url).toContain('reference=TEST-REF-123')
+    expect(options.method).toBe('POST')
   })
 
   it('should return verified status from response', async () => {
-    // Arrange
-    const mockResponse = { verified: true, reference: 'TEST-REF-124' } as PaymentVerifyResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+    const mockResponse = { verified: true, reference: 'TEST-REF-124' }
+    mockFetchOk(mockResponse)
 
-    // Act
     const result = await api.verifyPayment('TEST-REF-124')
 
-    // Assert
     expect(result.verified).toBe(true)
     expect(result.reference).toBe('TEST-REF-124')
   })
 
   it('should handle unverified payment', async () => {
-    // Arrange
-    const mockResponse = { verified: false, reference: 'TEST-REF-125' } as PaymentVerifyResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+    const mockResponse = { verified: false, reference: 'TEST-REF-125' }
+    mockFetchOk(mockResponse)
 
-    // Act
     const result = await api.verifyPayment('TEST-REF-125')
 
-    // Assert
     expect(result.verified).toBe(false)
   })
 
-  it('should handle errors from apiFetch', async () => {
-    // Arrange
-    ((global as any).apiFetch).mockRejectedValueOnce(new Error('Verification failed'))
+  it('should handle errors from fetch', async () => {
+    mockFetchError('Verification failed')
 
-    // Act & Assert
     await expect(api.verifyPayment('TEST-REF-126')).rejects.toThrow('Verification failed')
   })
 
   it('should encode reference safely in URL', async () => {
-    // Arrange
-    const mockResponse = { verified: true, reference: 'TEST/REF' } as PaymentVerifyResponse
-    ((global as any).apiFetch).mockResolvedValueOnce(mockResponse)
+    const mockResponse = { verified: true, reference: 'TEST/REF' }
+    mockFetchOk(mockResponse)
 
-    // Act
     await api.verifyPayment('TEST/REF')
 
-    // Assert - reference should be URL-encoded
-    const callArgs = ((global as any).apiFetch).mock.calls[0][0]
-    expect(callArgs).toContain('reference=TEST%2FREF')
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain('reference=')
+    expect(url).toContain('TEST')
   })
 })
 

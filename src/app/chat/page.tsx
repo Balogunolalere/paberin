@@ -28,9 +28,11 @@ interface UIMessage extends ChatMessage {
 
 const SUGGESTIONS = [
   'What materials do you cut?',
-  'How fast can I get 50 pieces?',
-  'Quote for 100 leather tags',
-  'Do you deliver to Lekki?',
+  'How much for 3 full bubas?',
+  'Quote for 200 leather tags',
+  'How fast is express delivery?',
+  'Do you do cake toppers?',
+  'I need acrylic signage, 4×4 ft',
 ];
 
 function uid() {
@@ -216,7 +218,7 @@ function ChatContent() {
                         )}
                         {m.renderOrderNow && (
                           <Link
-                            href="/order"
+                            href={`/order?from=chat&quote=${encodeURIComponent(JSON.stringify(m.quote))}`}
                             className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide bg-white text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white border border-[#FF5C00] px-3 py-1.5 rounded-full transition-colors"
                           >
                             Order Now
@@ -301,7 +303,10 @@ function ChatContent() {
                     {pendingQuote.summary}
                   </p>
                 )}
-                <Link href="/order" className="btn-primary mt-4 w-full">
+                <Link
+                  href={`/order?from=chat&quote=${encodeURIComponent(JSON.stringify(pendingQuote))}`}
+                  className="btn-primary mt-4 w-full"
+                >
                   Place This Order
                 </Link>
               </div>
