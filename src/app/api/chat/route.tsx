@@ -135,9 +135,12 @@ async function saveSessionToAdmin(params: {
       body: JSON.stringify({
         message: params.messages[params.messages.length - 1]?.content || '',
         brand: params.brand,
-        mode: 'live', // Admin will process through its own LLM + save to DB
+        mode: 'live',
         history: params.messages.slice(0, -1),
         sessionId: params.sessionId,
+        // Backend only persists — no LLM call (avoids a second model call per turn)
+        persist_only: true,
+        ...(params.customerPhone ? { customerPhone: params.customerPhone } : {}),
       }),
       // Short timeout — we don't want to block the customer waiting for admin save
       signal: controller.signal,
@@ -169,6 +172,7 @@ export async function POST(request: NextRequest) {
       history,
       brand = 'paberin',
       sessionId: incomingSessionId,
+      customerPhone: rawCustomerPhone,
     } = body as Record<string, unknown>;
 
     // ── Input validation & sanitization ──
@@ -382,6 +386,7 @@ export async function POST(request: NextRequest) {
       sessionId,
       brand: typeof brand === 'string' && brand.length <= 32 ? brand : 'paberin',
       messages: allMessages,
+      customerPhone: typeof rawCustomerPhone === 'string' ? rawCustomerPhone : undefined,
     }).catch(() => {}); // Explicitly swallow — must not throw
 
     return NextResponse.json(response);

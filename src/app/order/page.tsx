@@ -82,6 +82,7 @@ function OrderPageInner() {
   const [referralValid, setReferralValid] = useState<null | { valid: boolean; reward?: number; referrer?: string }>(null);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [paymentError, setPaymentError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [uploadFiles, setUploadFiles] = useState<{ name: string; data: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -368,35 +369,41 @@ function OrderPageInner() {
         isFirstTimeCustomer: customer?.isNew || false,
       });
       setCreatedOrder(order);
-
-      // Initialize Paystack payment (best-effort — order is already created)
-      try {
-        const pay = await api.initializePayment({
-          amount: order.totalAmount,
-          email: form.customerEmail,
-          orderNumber: order.orderNumber,
-          brand: 'PABERIN',
-          metadata: { orderNumber: order.orderNumber, brand: 'PABERIN' },
-          callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete?order=${order.orderNumber}`,
-        });
-        // Redirect to Paystack checkout
-        const payData = pay as any;
-        const authUrl = payData?.authorizationUrl || payData?.authorization_url;
-        if (authUrl) {
-          window.location.href = authUrl;
-          return;
-        }
-        console.warn('Payment init succeeded but no authorization URL returned:', payData);
-      } catch (payErr) {
-        // Payment init failed — fall through to success screen with manual payment note
-        console.warn('Payment init failed:', payErr);
-      }
+      await startPayment(order);
     } catch (err: any) {
       setError(err?.message || 'Could not submit order. Please try again.');
     } finally {
       setSubmitting(false);
     }
   };
+
+  /** Initialize Paystack payment and redirect to checkout. */
+  const startPayment = useCallback(async (order: Order) => {
+    setPaymentError(null);
+    try {
+      const pay = await api.initializePayment({
+        amount: order.totalAmount,
+        email: form.customerEmail,
+        orderNumber: order.orderNumber,
+        brand: 'PABERIN',
+        metadata: { orderNumber: order.orderNumber, brand: 'PABERIN' },
+        callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete?order=${order.orderNumber}`,
+      });
+      // Redirect to Paystack checkout
+      const payData = pay as any;
+      const authUrl = payData?.authorizationUrl || payData?.authorization_url;
+      if (authUrl) {
+        window.location.href = authUrl;
+        return;
+      }
+      console.warn('Payment init succeeded but no authorization URL returned:', payData);
+      setPaymentError('Payment could not be started — no checkout link returned. Use the button below to retry.');
+    } catch (payErr: any) {
+      // Order is already created — surface the failure so the customer can retry
+      console.warn('Payment init failed:', payErr);
+      setPaymentError(payErr?.message || 'Payment could not be initialized. Use the button below to retry.');
+    }
+  }, [form.customerEmail]);
 
   /* ──────── Success State ──────── */
   if (createdOrder) {
@@ -442,6 +449,19 @@ function OrderPageInner() {
               </div>
             </div>
           </ScrollReveal>
+          {paymentError && (
+            <ScrollReveal delay={0.35}>
+              <div className="mt-8 p-4 border border-red-200 bg-red-50 rounded-lg text-left">
+                <p className="text-sm text-red-700 mb-3">{paymentError}</p>
+                <button
+                  onClick={() => startPayment(createdOrder)}
+                  className="btn-primary w-full justify-center"
+                >
+                  Retry Payment
+                </button>
+              </div>
+            </ScrollReveal>
+          )}
           <ScrollReveal delay={0.4}>
             <div className="mt-10 flex justify-center gap-4 flex-wrap">
               <Link

@@ -260,6 +260,7 @@ export interface ChatRequestBody {
   mode?: 'live' | 'mock';
   history?: ChatMessage[];
   sessionId?: string;
+  customerPhone?: string;
 }
 
 export interface ChatResponse {
@@ -478,7 +479,8 @@ export const api = {
     metadata?: Record<string, unknown>;
     callbackUrl?: string // Optional override for callback URL
   }) => {
-    const callbackUrl = body.callbackUrl || `${process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app'}/order/complete`;
+    // Default callback must land on THIS frontend, not the admin backend
+    const callbackUrl = body.callbackUrl || `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete`;
     return apiFetch<PaymentInitResponse>('/api/payment/initialize', {
       method: 'POST',
       body: JSON.stringify({ ...body, callbackUrl }),

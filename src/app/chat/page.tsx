@@ -133,12 +133,22 @@ function ChatContent() {
           .filter((m) => !m.pending && m.content && !m.isError)
           .map((m) => ({ role: m.role, content: m.content }));
 
+        let customerPhone: string | undefined;
+        try {
+          const stored = localStorage.getItem('paberin_customer');
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed?.phone) customerPhone = parsed.phone;
+          }
+        } catch { /* ignore storage errors */ }
+
         const res = await api.sendChat({
           message: trimmed,
           brand: 'paberin',
           mode: 'live',
           history,
           sessionId,
+          customerPhone,
         });
 
         if (sessionId !== res.sessionId) setSessionId(res.sessionId);
