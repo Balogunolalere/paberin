@@ -13,12 +13,10 @@ const config = {
       exclude: ['node_modules/', '.next/'],
     },
   },
-  vite: {
-    resolve: {
-      alias: [
-        { find: '@', replacement: resolve(__dirname, 'src') },
-      ],
-    },
+  resolve: {
+    alias: [
+      { find: '@', replacement: resolve(__dirname, 'src') },
+    ],
   },
 } as any
 

@@ -63,6 +63,10 @@ export interface Service {
 
 export interface QuoteBreakdown {
   serviceLabel?: string;
+  serviceType?: string;
+  sla?: string;
+  leadTime?: string;
+  notes?: string;
   basePrice?: number;
   expressSurcharge?: number;
   addOnsTotal?: number;
@@ -260,11 +264,7 @@ export interface ChatRequestBody {
 
 export interface ChatResponse {
   assistant_text: string;
-  tool_calls?: any[];
-  tool_results?: any[];
   latency_ms?: number;
-  customer_type?: string;
-  confidence?: number;
   quote?: {
     price: number;
     original_price?: number;
@@ -273,7 +273,6 @@ export interface ChatResponse {
     summary?: string;
   };
   render_order_now?: boolean;
-  confidence_blocked?: boolean;
   sessionId?: string;
   error?: string;
 }
@@ -311,13 +310,15 @@ export const api = {
 
   /** Send a chat message to the Paberin AI assistant (Agnes 2.0 Flash via local route).
    *  Uses the local /api/chat endpoint which has the complete Paberin service catalog
-   *  and structured [QUOTE] block extraction. */
+   *  and structured [QUOTE] block extraction. The client-side timeout is a safety
+   *  net so the UI can never hang if the server stalls. */
   sendChat: async (body: ChatRequestBody): Promise<ChatResponse> => {
     const res = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       cache: 'no-store',
+      signal: AbortSignal.timeout(90_000),
     });
 
     let data: any = null;

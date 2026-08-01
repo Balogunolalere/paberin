@@ -24,6 +24,8 @@ interface UIMessage extends ChatMessage {
   pending?: boolean;
   quote?: ChatResponse['quote'];
   renderOrderNow?: boolean;
+  /** Message is a client-side failure notice, not an assistant reply — styled differently and never sent back as history. */
+  isError?: boolean;
 }
 
 const WELCOME_MSG: UIMessage = {
@@ -86,6 +88,9 @@ function ChatContent() {
   const [pendingQuote, setPendingQuote] = useState<ChatResponse['quote'] | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Last customer query — passed to the order form so the customer's own
+  // words (what they want, what they agreed to pay) reach the order notes.
+  const lastUserQueryRef = useRef<string>('');
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -109,6 +114,7 @@ function ChatContent() {
     async (text: string) => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
+      lastUserQueryRef.current = trimmed;
       setError(null);
       setInput('');
 
@@ -124,7 +130,7 @@ function ChatContent() {
 
       try {
         const history: ChatMessage[] = messages
-          .filter((m) => !m.pending && m.content)
+          .filter((m) => !m.pending && m.content && !m.isError)
           .map((m) => ({ role: m.role, content: m.content }));
 
         const res = await api.sendChat({
@@ -153,19 +159,27 @@ function ChatContent() {
 
         if (res.quote) setPendingQuote(res.quote);
       } catch (err: any) {
+        const timedOut =
+          err?.name === 'TimeoutError' ||
+          err?.name === 'AbortError' ||
+          /timed out|aborted|taking too long/i.test(err?.message || '');
         setMessages((prev) =>
           prev.map((m) =>
             m.id === pendingMsg.id
               ? {
                   ...m,
-                  content:
-                    "I couldn't reach the assistant just now. Please try again, or call 0803 500 3068.",
+                  content: timedOut
+                    ? 'The assistant is taking too long to respond. Please try again.'
+                    : "I couldn't reach the assistant just now. Please try again, or call 0803 500 3068.",
                   pending: false,
+                  isError: true,
                 }
               : m
           )
         );
-        setError(err?.message || 'Chat failed.');
+        setError(
+          timedOut ? 'Request timed out. Please try again.' : err?.message || 'Chat failed.'
+        );
       } finally {
         setSending(false);
         inputRef.current?.focus();
@@ -173,6 +187,15 @@ function ChatContent() {
     },
     [messages, sending, sessionId]
   );
+
+  /** Build the /order handoff URL: quote JSON + the customer's own words. */
+  const orderUrl = useCallback((quote: ChatResponse['quote']) => {
+    const params = new URLSearchParams();
+    params.set('from', 'chat');
+    params.set('quote', JSON.stringify(quote));
+    if (lastUserQueryRef.current) params.set('context', lastUserQueryRef.current.slice(0, 200));
+    return `/order?${params.toString()}`;
+  }, []);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -235,7 +258,9 @@ function ChatContent() {
                     className={`max-w-[85%] sm:max-w-[75%] ${
                       m.role === 'user'
                         ? 'bg-[#FF5C00] text-white rounded-2xl rounded-br-sm'
-                        : 'bg-[#F7F7F7] text-black rounded-2xl rounded-bl-sm border border-[#EAEAEA]'
+                        : m.isError
+                          ? 'bg-[#FFF7F0] text-[#8A2B00] rounded-2xl rounded-bl-sm border border-[#E05200]/40'
+                          : 'bg-[#F7F7F7] text-black rounded-2xl rounded-bl-sm border border-[#EAEAEA]'
                     } px-4 py-3`}
                   >
                     {m.pending ? (
@@ -249,6 +274,11 @@ function ChatContent() {
                         <div className="text-sm leading-relaxed whitespace-pre-wrap">
                           {renderMarkdown(m.content)}
                         </div>
+                        {m.isError && (
+                          <p className="text-[10px] font-mono uppercase tracking-[0.12em] text-[#E05200] mt-1.5">
+                            Connection issue — your message was not sent
+                          </p>
+                        )}
                         {m.quote && (
                           <div className="mt-3 pt-3 border-t border-current/20">
                             <p className="font-mono text-[10px] uppercase tracking-[0.12em] opacity-70 mb-1">
@@ -272,7 +302,7 @@ function ChatContent() {
                         )}
                         {m.renderOrderNow && (
                           <Link
-                            href={`/order?from=chat&quote=${encodeURIComponent(JSON.stringify(m.quote))}`}
+                            href={orderUrl(m.quote!)}
                             className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide bg-white text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white border border-[#FF5C00] px-3 py-1.5 rounded-full transition-colors"
                           >
                             Order Now
@@ -358,7 +388,7 @@ function ChatContent() {
                   </p>
                 )}
                 <Link
-                  href={`/order?from=chat&quote=${encodeURIComponent(JSON.stringify(pendingQuote))}`}
+                  href={orderUrl(pendingQuote)}
                   className="btn-primary mt-4 w-full"
                 >
                   Place This Order

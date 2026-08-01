@@ -84,3 +84,8 @@ Thumbs.db
 # pnpm store
 .pnpm-store
 package-lock.json
+.reasonix/*
+# Dataset pipeline raw data + checkpoints (generated)
+scripts/data/
+tests/datasets/checkpoints/
+tests/datasets/eval_report_*.json

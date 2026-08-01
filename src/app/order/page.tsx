@@ -12,7 +12,9 @@ import {
   type Service,
   type QuoteResponse,
   type Order,
+  type ChatResponse,
 } from '@/lib/api';
+import { matchChatQuoteToService, buildChatOrderNotes } from '@/lib/chat-order';
 
 /**
  * Paberin order form — 5-step wizard.
@@ -120,10 +122,12 @@ function OrderPageInner() {
   }, [searchParams, servicesLoading, services]);
 
   // Chat quote prefill: when coming from /chat with ?from=chat&quote={...}
-  // pre-fill as much as possible from the AI quote — even if the exact
-  // service isn't in the catalog, prefill quantity, SLA, delivery, and
-  // customer notes so the customer doesn't have to re-enter everything.
+  // pre-fill as much as possible from the AI quote — map the AI's service
+  // onto the catalog (even when there is no exact template), prefill
+  // quantity/SLA/delivery/notes, and land on step 2 so the customer only
+  // reviews, doesn't re-enter everything.
   const chatPrefillApplied = useRef(false);
+  const [chatMapping, setChatMapping] = useState<{ fromLabel: string; toLabel: string; mapped: boolean } | null>(null);
   useEffect(() => {
     if (chatPrefillApplied.current) return;
     if (servicesLoading || services.length === 0) return;
@@ -131,34 +135,32 @@ function OrderPageInner() {
     const quoteRaw = searchParams.get('quote');
     if (from !== 'chat' || !quoteRaw) return;
     try {
-      const q = JSON.parse(decodeURIComponent(quoteRaw));
+      const q = JSON.parse(decodeURIComponent(quoteRaw)) as ChatResponse['quote'];
       const breakdown = q?.breakdown;
-      const serviceLabel = (breakdown?.serviceLabel || '').toLowerCase().trim();
-      const serviceType = (breakdown?.serviceType || q?.service_type || '').toLowerCase().trim();
-
-      // Try to match: 1) exact label, 2) partial label, 3) service type key, 4) fuzzy match
-      let match = services.find(s => s.label.toLowerCase() === serviceLabel);
-      if (!match) match = services.find(s => s.label.toLowerCase().includes(serviceLabel) || serviceLabel.includes(s.label.toLowerCase()));
-      if (!match && serviceType) match = services.find(s => s.type.toLowerCase() === serviceType);
-      if (!match) match = services.find(s => s.type.toLowerCase().includes(serviceType) || serviceType.includes(s.type.toLowerCase()));
-
-      // Build notes from whatever the AI discussed
-      const notes = [
-        serviceLabel ? `AI discussed: ${breakdown?.serviceLabel || serviceLabel}` : '',
-        breakdown?.lead_time ? `Lead time: ${breakdown.lead_time}` : '',
-        breakdown?.notes ? breakdown.notes : '',
-      ].filter(Boolean).join('. ');
+      const { service, mapped } = matchChatQuoteToService(q, services);
+      const sla: 'Standard' | 'Express' = breakdown?.sla === 'Express' ? 'Express' : 'Standard';
+      const notes = buildChatOrderNotes(q, searchParams.get('context'));
 
       chatPrefillApplied.current = true;
       setForm((prev) => ({
         ...prev,
-        serviceType: match?.type || prev.serviceType,
-        serviceName: match?.label || (breakdown?.serviceLabel || prev.serviceName),
-        quantity: breakdown?.quantity || q?.quantity || 1,
-        sla: (breakdown?.sla || q?.sla || 'Standard') as 'Standard' | 'Express',
+        serviceType: service?.type || prev.serviceType,
+        serviceName: service?.label || breakdown?.serviceLabel || prev.serviceName,
+        quantity: breakdown?.quantity && breakdown.quantity > 0 ? breakdown.quantity : 1,
+        sla,
         deliveryMethod: (breakdown?.deliveryFee || 0) > 0 ? 'LOCAL_DELIVERY' : 'PICKUP',
         customerNotes: notes || prev.customerNotes,
       }));
+      // Tell the customer when the AI's item was mapped to a different
+      // catalog service (e.g. "Full Buba" → "Fabric Laser Cutting")
+      if (service) {
+        const labelDiffers =
+          !!breakdown?.serviceLabel &&
+          breakdown.serviceLabel.trim().toLowerCase() !== service.label.trim().toLowerCase();
+        if (mapped || labelDiffers) {
+          setChatMapping({ fromLabel: breakdown?.serviceLabel || 'your request', toLabel: service.label, mapped });
+        }
+      }
       // Always jump to step 2 so they can review and adjust
       setStep(2);
     } catch {
@@ -248,6 +250,7 @@ function OrderPageInner() {
   const selectService = (s: Service) => {
     update('serviceType', s.type);
     update('serviceName', s.label);
+    setChatMapping(null); // manual choice overrides the AI mapping notice
     setStep(2);
   };
 
@@ -614,6 +617,14 @@ function OrderPageInner() {
                         Selected service
                       </p>
                       <p className="text-base font-bold text-black">{form.serviceName}</p>
+                      {chatMapping && (
+                        <p className="text-xs text-[#E05200] mt-1 max-w-md leading-relaxed">
+                          From your chat: “{chatMapping.fromLabel}” — we mapped it to{' '}
+                          <span className="font-semibold">{chatMapping.toLabel}</span>
+                          {chatMapping.mapped ? ' (closest available service)' : ''}. You can
+                          change it below if needed.
+                        </p>
+                      )}
                     </div>
                     <button
                       onClick={() => setStep(1)}
