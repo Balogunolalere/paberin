@@ -326,7 +326,9 @@ export const api = {
 
     if (!res.ok) {
       const message = data?.message || data?.error || `Chat request failed (${res.status})`;
-      throw new Error(message);
+      const err = new Error(message) as Error & { status?: number };
+      err.status = res.status;
+      throw err;
     }
 
     return data as ChatResponse;

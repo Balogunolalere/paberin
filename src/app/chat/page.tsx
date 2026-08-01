@@ -163,14 +163,17 @@ function ChatContent() {
           err?.name === 'TimeoutError' ||
           err?.name === 'AbortError' ||
           /timed out|aborted|taking too long/i.test(err?.message || '');
+        const serverBusy = err?.status === 504 || err?.status === 503 || err?.status === 429;
         setMessages((prev) =>
           prev.map((m) =>
             m.id === pendingMsg.id
               ? {
                   ...m,
-                  content: timedOut
-                    ? 'The assistant is taking too long to respond. Please try again.'
-                    : "I couldn't reach the assistant just now. Please try again, or call 0803 500 3068.",
+                  content: serverBusy
+                    ? 'The assistant is taking a bit longer than usual right now. Please try again in a moment.'
+                    : timedOut
+                      ? 'The assistant is taking too long to respond. Please try again.'
+                      : "I couldn't reach the assistant just now. Please try again, or call 0803 500 3068.",
                   pending: false,
                   isError: true,
                 }
@@ -178,7 +181,11 @@ function ChatContent() {
           )
         );
         setError(
-          timedOut ? 'Request timed out. Please try again.' : err?.message || 'Chat failed.'
+          serverBusy
+            ? 'The assistant is busy right now. Please try again shortly.'
+            : timedOut
+              ? 'Request timed out. Please try again.'
+              : err?.message || 'Chat failed.'
         );
       } finally {
         setSending(false);

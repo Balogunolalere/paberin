@@ -42,8 +42,13 @@ Keep: SKYAL_SYSTEM_PROMPT const (update its [QUOTE] template to add "add_ons_tot
 the local 60s response cache, the dual input formats (message+history OR messages array), and the
 response shape { reply, assistant_text, quote, render_order_now, sessionId, error?, cached? }.
 Fix:
-- Config via parseEnvInt: FETCH_TIMEOUT (30000), MAX_RETRIES (3), RETRY_BASE_DELAY (1000),
-  TOTAL_TIMEOUT (60000), RATE_LIMIT_MAX (15), RATE_LIMIT_WINDOW (60000).
+- Config via parseEnvInt: FETCH_TIMEOUT (20000), MAX_RETRIES (2), RETRY_BASE_DELAY (1000),
+  TOTAL_TIMEOUT (45000), RATE_LIMIT_MAX (15), RATE_LIMIT_WINDOW (60000).
+- Runtime: keep "nodejs" (it already is) and ADD `export const maxDuration = 60;` — without it,
+  slow Agnes calls get killed by the platform as HTTP 504 (Edge functions cap at ~30s and cannot
+  be raised; Node + maxDuration solves it. On Vercel Pro you can raise maxDuration to 300).
+- Add a short in-memory response cache (TTL 60s, cap ~100) keyed on the Agnes messages, so a
+  retry of the same question after a timeout returns instantly instead of 504-ing again.
 - Prompt-injection scan on message AND sanitized history (isInjectionAttempt); reject 400.
 - Rate limiting via the RateLimiter class keyed on the LAST x-forwarded-for entry (split(',').pop()).
 - Replace the single AbortController call with retryWithBackoff: each attempt gets a FRESH

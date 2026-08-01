@@ -13,6 +13,7 @@
 import { describe, expect, test, vi, beforeAll, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 import type { ChatResponse } from '@/lib/api'
+import { clearChatCache } from '@/lib/chat-cache'
 
 // Must be set BEFORE the route module is imported (env is read at module load)
 process.env.CHAT_MODE = 'live'
@@ -63,11 +64,13 @@ async function send(body: unknown, headers: Record<string, string> = {}) {
 const validBody = { message: 'How much for 3 full bubas?', history: [], brand: 'paberin' }
 
 beforeAll(async () => {
-  ;({ POST } = await import('@/app/api/chat/route'))
+  const mod = await import('@/app/api/chat/route')
+  POST = mod.POST
 })
 
 beforeEach(() => {
   ;(fetch as any).mockReset()
+  clearChatCache() // the module-level response cache must not leak between tests
 })
 
 describe('POST /api/chat — validation', () => {

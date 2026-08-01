@@ -50,12 +50,16 @@ const CHAT_MODE = process.env.CHAT_MODE || 'live'; // 'live' or 'mock'
 const ADMIN_API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
 
 // Robustness configuration — validated; invalid env values fall back to defaults
-const FETCH_TIMEOUT = parseEnvInt('FETCH_TIMEOUT', 30000); // per-attempt timeout in ms
-const MAX_RETRIES = parseEnvInt('MAX_RETRIES', 3);
+const FETCH_TIMEOUT = parseEnvInt('FETCH_TIMEOUT', 20000); // per-attempt timeout in ms
+const MAX_RETRIES = parseEnvInt('MAX_RETRIES', 2);
 const RETRY_BASE_DELAY = parseEnvInt('RETRY_BASE_DELAY', 1000); // ms
-const TOTAL_BUDGET_MS = parseEnvInt('TOTAL_TIMEOUT', 60000); // cap across all attempts
+const TOTAL_BUDGET_MS = parseEnvInt('TOTAL_TIMEOUT', 45000); // cap across all attempts
 const RATE_LIMIT_MAX = parseEnvInt('RATE_LIMIT_MAX', 100);
 const RATE_LIMIT_WINDOW = parseEnvInt('RATE_LIMIT_WINDOW', 60000); // 1min default
+
+// Short in-memory response cache so repeated questions (e.g. after a
+// timeout) don't re-hit the slow LLM and trip the platform's 504.
+import { chatCacheGet, chatCacheSet } from '@/lib/chat-cache';
 
 if (CHAT_MODE === 'live' && !AGNES_API_KEY) {
   throw new Error('AGNES_API_KEY environment variable is required in live mode');
@@ -248,6 +252,26 @@ export async function POST(request: NextRequest) {
       { role: 'user' as const, content: message },
     ];
 
+    // ── Short response cache (TTL 60s) ──
+    // Avoids re-hitting the LLM for identical questions — the most common
+    // cause of 504s is a slow Agnes call, and a retry of the same question
+    // shouldn't have to wait for another one.
+    const cacheKey = agnesMessages.map((m) => `${m.role}:${m.content}`).join('|');
+    const cachedRaw = chatCacheGet(cacheKey);
+    if (cachedRaw !== null) {
+      const quote = extractQuote(cachedRaw);
+      const assistantText = cleanAssistantText(cachedRaw);
+      return NextResponse.json({
+        assistant_text: assistantText,
+        latency_ms: 0,
+        quote,
+        render_order_now: quote !== undefined,
+        sessionId,
+        error: undefined,
+        cached: true,
+      });
+    }
+
     // ── Call Agnes 2.0 Flash ──
     // Each attempt gets its OWN AbortController + timeout: an aborted
     // controller stays aborted, so sharing one across retries would make
@@ -326,6 +350,11 @@ export async function POST(request: NextRequest) {
     // ── Parse response ──
     const rawAssistantText = data.choices?.[0]?.message?.content || '';
 
+    // Store in cache (bounded)
+    if (rawAssistantText) {
+      chatCacheSet(cacheKey, rawAssistantText);
+    }
+
     // ── Extract quote (structured [QUOTE] block first, regex fallback) ──
     const quote = extractQuote(rawAssistantText);
 
@@ -380,4 +409,10 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
+
+// Vercel function duration: Node runtime + maxDuration is required because
+// the Agnes call can take 20-45s and Edge functions get killed at ~30s
+// (which surfaced as 504s). Hobby allows 60s; on Pro you can raise this to
+// 300 if you also bump TOTAL_TIMEOUT.
+export const maxDuration = 60;
