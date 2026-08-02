@@ -69,17 +69,42 @@ export interface QuoteBreakdown {
   notes?: string;
   basePrice?: number;
   expressSurcharge?: number;
+  expressApplied?: boolean;
   addOnsTotal?: number;
   discount?: number;
+  discountType?: 'REFERRAL' | 'FIRST_TIME' | 'NONE';
   deliveryFee?: number;
   finalPriceNaira?: number;
   quantity?: number;
   [k: string]: unknown;
 }
 
+export interface Availability {
+  status: 'IN_STOCK' | 'LOW' | 'OUT_OF_STOCK';
+  remaining: number;
+  etaDays?: number;
+}
+
 export interface QuoteResponse {
   quoteNaira: number;
   breakdown?: QuoteBreakdown;
+  availability?: Availability | null;
+  quoteId?: string;
+  quoteNumber?: string;
+  quoteExpiresAt?: string | null;
+}
+
+export interface SavedQuote {
+  id: string;
+  quoteNumber: string;
+  totalAmount: number;
+  discount?: number;
+  deliveryFee?: number;
+  serviceType?: string | null;
+  status: string;
+  expiresAt?: string | null;
+  createdAt: string;
+  requestJson?: string;
 }
 
 export interface OrderTimelineEntry {
@@ -106,6 +131,8 @@ export interface Order {
   deliveryAddress: string | null;
   createdAt: string;
   updatedAt: string;
+  needsReview?: boolean;
+  availability?: Availability | null;
   // Tracking endpoint returns extras:
   gracePeriodExpires?: string | null;
   canModify?: boolean;
@@ -274,6 +301,15 @@ export interface ChatResponse {
     summary?: string;
   };
   render_order_now?: boolean;
+  /** Engine-extracted specs when no catalog match — UI offers a custom order. */
+  custom?: {
+    description: string;
+    material?: string;
+    quantity: number;
+    sla?: string;
+  };
+  /** Saved quote snapshots for this phone (shown as a banner). */
+  openQuotes?: SavedQuote[];
   sessionId?: string;
   error?: string;
 }
@@ -306,13 +342,24 @@ export const api = {
   getOrdersByPhone: (phone: string) =>
     apiFetch<PhoneOrdersResponse>('/api/magic-link', {
       method: 'POST',
-      body: JSON.stringify({ phone }),
+      body: JSON.stringify({ phone, brand: 'PABERIN' }),
+    }),
+
+  /** Open saved quote snapshots for a phone (same price when they come back). */
+  getOpenQuotes: (phone: string) =>
+    apiFetch<SavedQuote[]>(`/api/quotes?phone=${encodeURIComponent(phone)}`),
+
+  /** Accept a saved quote → creates the order from the price snapshot. */
+  acceptQuote: (quoteId: string, customerPhone: string) =>
+    apiFetch<Order>(`/api/quotes/${encodeURIComponent(quoteId)}/accept`, {
+      method: 'POST',
+      body: JSON.stringify({ customerPhone }),
     }),
 
   /** Send a chat message to the Paberin AI assistant (Agnes 2.0 Flash via local route).
-   *  Uses the local /api/chat endpoint which has the complete Paberin service catalog
-   *  and structured [QUOTE] block extraction. The client-side timeout is a safety
-   *  net so the UI can never hang if the server stalls. */
+   *  Uses the local /api/chat endpoint which extracts structured [SPECS] and
+   *  prices them with the admin pricing engine. The client-side timeout is a
+   *  safety net so the UI can never hang if the server stalls. */
   sendChat: async (body: ChatRequestBody): Promise<ChatResponse> => {
     const res = await fetch('/api/chat', {
       method: 'POST',
@@ -516,19 +563,18 @@ export function formatDate(d: string | Date): string {
   }
 }
 
-/** Human-readable order state, mapped to Paberin's voice. */
+/** Human-readable order state — aligned to the admin's OrderState enum. */
 export function formatOrderState(state: string): string {
   const map: Record<string, string> = {
+    QUOTING: 'Awaiting Pricing',
     PAYMENT_PENDING: 'Awaiting Payment',
     PAYMENT_SUCCESS: 'Payment Confirmed',
     ON_HOLD: 'On Hold',
-    IN_PROGRESS: 'In Production',
-    CUTTING: 'Cutting',
-    QC: 'Quality Check',
-    READY_FOR_PICKUP: 'Ready for Pickup',
-    OUT_FOR_DELIVERY: 'Out for Delivery',
+    IN_QUEUE: 'In Production Queue',
+    IN_PRODUCTION: 'In Production',
+    READY: 'Ready for Pickup/Delivery',
+    DISPATCHED: 'Dispatched',
     DELIVERED: 'Delivered',
-    COMPLETED: 'Completed',
     CANCELLED: 'Cancelled',
     REFUNDED: 'Refunded',
   };
@@ -538,9 +584,10 @@ export function formatOrderState(state: string): string {
 /** Tailwind class for an order state badge — accent for active, muted for terminal. */
 export function orderStateClass(state: string): string {
   const terminal = ['DELIVERED', 'COMPLETED', 'CANCELLED', 'REFUNDED'];
-  const active = ['IN_PROGRESS', 'CUTTING', 'QC', 'OUT_FOR_DELIVERY'];
+  const active = ['IN_QUEUE', 'IN_PRODUCTION', 'READY', 'DISPATCHED', 'OUT_FOR_DELIVERY'];
   if (terminal.includes(state)) return 'bg-[#F7F7F7] text-[#666666] border-[#EAEAEA]';
   if (active.includes(state)) return 'bg-[#FF5C00]/10 text-[#FF5C00] border-[#FF5C00]/30';
   if (state === 'PAYMENT_PENDING') return 'bg-[#FFF7F0] text-[#E05200] border-[#FFD9BF]';
+  if (state === 'QUOTING') return 'bg-[#FFF7F0] text-[#E05200] border-[#FFD9BF]';
   return 'bg-[#F7F7F7] text-[#666666] border-[#EAEAEA]';
 }

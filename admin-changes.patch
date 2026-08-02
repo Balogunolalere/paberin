@@ -1,0 +1,1571 @@
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/prisma/schema.prisma copy/prisma/schema.prisma
+--- a/prisma/schema.prisma	2026-08-01 15:25:33.165993991 +0100
++++ b/prisma/schema.prisma	2026-08-02 03:48:44.817879276 +0100
+@@ -110,8 +110,15 @@
+ 
+   orders              Order[]
+ 
++  // Inventory link — which stocked material this service consumes (business-
++  // supplied materials only; customerSupplied services leave this null).
++  materialStockItemId String?
++  materialStockItem   InventoryItem? @relation(fields: [materialStockItemId], references: [id])
++  materialQtyPerUnit  Float          @default(1)
++
+   @@unique([brand, type])
+   @@index([brand, isActive])
++  @@index([materialStockItemId])
+ }
+ 
+ model Order {
+@@ -170,6 +177,10 @@
+ 
+   // Referral
+   referralCode        String?
++  discountType        String          @default("NONE") // NONE | REFERRAL | FIRST_TIME
++
++  // Provisional/custom orders: QUOTING state + review flag for admin
++  needsReview         Boolean         @default(false)
+ 
+   // Timestamps
+   createdAt           DateTime        @default(now())
+@@ -231,6 +242,7 @@
+   updatedAt       DateTime @updatedAt
+ 
+   transactions    InventoryTransaction[]
++  services        Service[]
+ 
+   @@index([brand, category])
+ }
+@@ -472,6 +484,29 @@
+   @@index([customerPhone])
+ }
+ 
++/// Persisted price snapshot — the "same price when the customer comes back"
++/// guarantee. Created by POST /api/services/quote (and the chat route); the
++/// snapshot is what a customer accepts/pays later, never a recompute.
++model Quote {
++  id            String   @id @default(cuid())
++  quoteNumber   String   @unique
++  brand         Brand
++  customerPhone String
++  requestJson   String // full QuoteRequest JSON
++  serviceType   String? // denormalized for filtering
++  totalAmount   Int
++  discount      Int      @default(0)
++  deliveryFee   Int      @default(0)
++  status        String   @default("OPEN") // OPEN, ACCEPTED, EXPIRED
++  expiresAt     DateTime?
++  orderId       String? // set when accepted
++  createdAt     DateTime @default(now())
++  updatedAt     DateTime @updatedAt
++
++  @@index([customerPhone, status])
++  @@index([brand, status])
++}
++
+ model FAQ {
+   id          String   @id @default(cuid())
+   brand       Brand?
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/prisma/seed.ts copy/prisma/seed.ts
+--- a/prisma/seed.ts	2026-08-01 07:57:03.603758156 +0100
++++ b/prisma/seed.ts	2026-08-02 03:53:48.113328050 +0100
+@@ -50,6 +50,8 @@
+   { type: 'skyal_topper_custom', label: 'Custom Cake Topper (Skyal)', desc: 'Custom-designed cake topper. Skyal handles toppers alongside laser work.', cat: ServiceCategory.ADD_ON, price: 25000, min: 25000, unit: 'per piece', supplied: false, std: '5-7 working days', exp: null, expPct: 0, allowExp: false },
+   // Add-ons
+   { type: 'stoning_board', label: 'Stoning Board (A2)', desc: 'Customized stoning board matching laser cut pattern', cat: ServiceCategory.ADD_ON, price: 20000, min: 20000, unit: 'per piece', supplied: false, std: '5 working days', exp: null, expPct: 0, allowExp: false },
++  // Hidden service for provisional QUOTING orders (unpriced custom jobs).
++  { type: 'custom_job', label: 'Custom Job', desc: 'Bespoke job awaiting pricing — not shown on the public catalog.', cat: ServiceCategory.SHEET_CUTTING, price: 0, min: 0, unit: 'per job', supplied: false, std: 'To be confirmed', exp: null, expPct: 0, allowExp: false, active: false },
+ ];
+ 
+ // ============================================================
+@@ -75,6 +77,34 @@
+   { type: 'paberin_fabric_cutting', label: 'Fabric Laser Cutting (Paberin)', desc: 'Basic fabric laser cutting for Paberin customers. Customer brings fabric.', cat: ServiceCategory.FABRIC_CUTTING, price: 20000, min: 20000, unit: 'per piece', supplied: true, std: '5 working days', exp: '48 hours', expPct: 0.5, allowExp: true },
+   { type: 'paberin_engraving_name', label: 'Name Engraving (Paberin)', desc: 'Name engraving on customer-supplied item. We don\u2019t rush engraving.', cat: ServiceCategory.ENGRAVING, price: 5000, min: 5000, unit: 'per piece', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
+   { type: 'paberin_sheet_cutting', label: 'Sheet Cutting (Paberin, in-house)', desc: 'Basic acrylic/wood sheet cutting on the in-house 900×600mm bed.', cat: ServiceCategory.SHEET_CUTTING, price: 40000, min: 40000, unit: 'per sheet', supplied: false, std: '5 working days', exp: '48 hours', expPct: 0.5, allowExp: true },
++  // Fabric cutting — full garment price list (mirrors the AI prompt tables).
++  { type: 'paberin_fabric_sleeves', label: 'Sleeves (pair)', desc: 'Laser cut design on both sleeves', cat: ServiceCategory.FABRIC_CUTTING, price: 20000, min: 20000, unit: 'per pair', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_buba', label: 'Full Buba', desc: 'Laser cut on full buba top', cat: ServiceCategory.FABRIC_CUTTING, price: 35000, min: 35000, unit: 'per piece', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_buba_layer', label: 'One Layer of Buba', desc: 'Laser cut on one layer of buba', cat: ServiceCategory.FABRIC_CUTTING, price: 40000, min: 40000, unit: 'per piece', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_wrapper', label: 'Bottom of Wrapper', desc: 'Laser cut on bottom of wrapper', cat: ServiceCategory.FABRIC_CUTTING, price: 40000, min: 40000, unit: 'per piece', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_skirt', label: 'Skirt', desc: 'Laser cut on skirt', cat: ServiceCategory.FABRIC_CUTTING, price: 50000, min: 50000, unit: 'per piece', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_blouse_skirt', label: 'Full Blouse + Full Skirt', desc: 'Laser cut on full blouse and full skirt', cat: ServiceCategory.FABRIC_CUTTING, price: 70000, min: 70000, unit: 'per set', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_buba_wrapper', label: 'Full Buba + Full Wrapper', desc: 'Laser cut on full buba and full wrapper', cat: ServiceCategory.FABRIC_CUTTING, price: 75000, min: 70000, unit: 'per set', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_boubou', label: 'Boubou', desc: 'Laser cut on boubou', cat: ServiceCategory.FABRIC_CUTTING, price: 45000, min: 45000, unit: 'per piece', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_sleeves_wrapper', label: 'Sleeves + Edge of Wrapper', desc: 'Laser cut on sleeves and edge of wrapper', cat: ServiceCategory.FABRIC_CUTTING, price: 50000, min: 50000, unit: 'per set', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_sleeves_buba', label: 'Sleeves + Buba Front/Back', desc: 'Laser cut on sleeves and buba front/back (3 sections)', cat: ServiceCategory.FABRIC_CUTTING, price: 30000, min: 30000, unit: 'per set', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_per_yard', label: 'Fabric Cutting (per yard)', desc: 'Continuous fabric laser cut — per yard. Pattern-continuation method up to 2.5 yards.', cat: ServiceCategory.FABRIC_CUTTING, price: 20000, min: 20000, unit: 'per yard', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_custom', label: 'Custom Fabric Cutting', desc: 'Custom laser cut — ₦10K per garment section. Minimum ₦20K.', cat: ServiceCategory.FABRIC_CUTTING, price: 10000, min: 20000, unit: 'per section', supplied: true, std: '5 working days', exp: '48 hours minimum', expPct: 0.5, allowExp: true },
++  { type: 'paberin_fabric_complex_gown', label: 'Complex Custom Gown', desc: 'Complex custom laser cut gown. Range ₦100K-₦200K.', cat: ServiceCategory.FABRIC_CUTTING, price: 150000, min: 100000, unit: 'per piece', supplied: true, std: '1-2 weeks', exp: null, expPct: 0, allowExp: false },
++  // Engraving — full item price list.
++  { type: 'paberin_engraving_phone', label: 'Phone Back Engraving', desc: "Engrave text/design on phone back. We don't rush — min 48h.", cat: ServiceCategory.ENGRAVING, price: 5000, min: 5000, unit: 'per phone', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_engraving_jewelry', label: 'Jewelry Engraving', desc: 'Engrave name/text on jewelry.', cat: ServiceCategory.ENGRAVING, price: 6000, min: 5000, unit: 'per piece', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_engraving_leather', label: 'Leather Engraving', desc: 'Engrave logo/design on leather.', cat: ServiceCategory.ENGRAVING, price: 17500, min: 15000, unit: 'per piece', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_engraving_wood', label: 'Wood Engraving', desc: 'Engrave on wood items (trays, notepads, etc.)', cat: ServiceCategory.ENGRAVING, price: 7500, min: 5000, unit: 'per piece', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_engraving_small_item', label: 'Small Item Engraving', desc: 'Engrave on small items (stirrers, sticks)', cat: ServiceCategory.ENGRAVING, price: 1500, min: 1000, unit: 'per piece', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_engraving_curved', label: 'Curved Surface Engraving', desc: 'Engrave on curved surface (complexity surcharge)', cat: ServiceCategory.ENGRAVING, price: 15000, min: 15000, unit: 'per piece', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_engraving_badge', label: 'Detective Badge / Seatbelt Positioner', desc: 'Custom detective badges — NO EXPRESS', cat: ServiceCategory.ENGRAVING, price: 2500, min: 2500, unit: 'per piece', supplied: true, std: '5+ working days (consultation required)', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_engraving_necklace', label: 'Necklace Engraving', desc: 'Engrave on necklace pendant', cat: ServiceCategory.ENGRAVING, price: 7000, min: 7000, unit: 'per piece', supplied: true, std: '48 hours minimum', exp: null, expPct: 0, allowExp: false },
++  // Sheet cutting — oversize / custom lines.
++  { type: 'paberin_sheet_oversize', label: 'Sheet Cutting (8ft × 4ft, external partner)', desc: 'Oversize acrylic/wood — external partner machine. 10 working days. No express.', cat: ServiceCategory.SHEET_CUTTING, price: 70000, min: 70000, unit: 'per sheet', supplied: false, std: '10 working days', exp: null, expPct: 0, allowExp: false },
++  { type: 'paberin_sheet_custom', label: 'Custom Sheet Cutting', desc: 'Custom-size acrylic/wood sheet cutting.', cat: ServiceCategory.SHEET_CUTTING, price: 55000, min: 55000, unit: 'per sheet', supplied: false, std: '5 working days', exp: '48 hours', expPct: 0.5, allowExp: true },
++  // Hidden service for provisional QUOTING orders (unpriced custom jobs).
++  { type: 'paberin_custom_job', label: 'Custom Job', desc: 'Bespoke job awaiting pricing — not shown on the public catalog.', cat: ServiceCategory.SHEET_CUTTING, price: 0, min: 0, unit: 'per job', supplied: false, std: 'To be confirmed', exp: null, expPct: 0, allowExp: false, active: false },
+ ];
+ 
+ const SKYAL_SETTINGS = [
+@@ -88,6 +118,9 @@
+   { key: 'express_surcharge_pct', value: '0.5', isPublic: true },
+   { key: 'grace_period_hours', value: '24', isPublic: true },
+   { key: 'vat_enabled', value: 'false', isPublic: false },
++  { key: 'first_time_discount_naira', value: '0', isPublic: false },
++  { key: 'quote_expiry_days', value: '7', isPublic: false },
++  { key: 'block_order_when_out_of_stock', value: 'false', isPublic: false },
+   { key: 'machine_bed_mm', value: '900x600', isPublic: true },
+   { key: 'fabric_max_yards', value: '2.5 (3 complex)', isPublic: true },
+   { key: 'external_partner_max_sheet', value: '4x8 ft', isPublic: true },
+@@ -104,6 +137,9 @@
+   { key: 'express_surcharge_pct', value: '0.5', isPublic: true },
+   { key: 'grace_period_hours', value: '24', isPublic: true },
+   { key: 'vat_enabled', value: 'false', isPublic: false },
++  { key: 'first_time_discount_naira', value: '0', isPublic: false },
++  { key: 'quote_expiry_days', value: '7', isPublic: false },
++  { key: 'block_order_when_out_of_stock', value: 'false', isPublic: false },
+   { key: 'whatsapp_number', value: '0803 500 3068', isPublic: true },
+ ];
+ 
+@@ -130,6 +166,7 @@
+         expressLeadTime: s.exp,
+         expressSurchargePct: s.expPct,
+         allowExpress: s.allowExp,
++        isActive: (s as any).active ?? true,
+         sortOrder: i,
+       },
+     });
+@@ -156,6 +193,7 @@
+         expressLeadTime: s.exp,
+         expressSurchargePct: s.expPct,
+         allowExpress: s.allowExp,
++        isActive: (s as any).active ?? true,
+         sortOrder: i,
+       },
+     });
+@@ -225,6 +263,54 @@
+   }
+   console.log(`✓ Seeded ${inventoryItems.length} inventory items`);
+ 
++  // Paberin inventory items (business-supplied materials).
++  const paberinInventoryItems = [
++    { name: 'Acrylic Sheet (Clear)', sku: 'PAB-ACR-CLR-001', category: 'acrylic', unit: 'sheet', qty: 15, threshold: 4, cost: 9000 },
++    { name: 'Acrylic Sheet (Mirror)', sku: 'PAB-ACR-MIR-001', category: 'acrylic', unit: 'sheet', qty: 8, threshold: 3, cost: 12000 },
++    { name: 'Wood Sheet (Plywood)', sku: 'PAB-WOOD-PLY-001', category: 'wood', unit: 'sheet', qty: 6, threshold: 2, cost: 8000 },
++    { name: 'Acrylic Rod (Sticks)', sku: 'PAB-ACR-ROD-001', category: 'acrylic', unit: 'pack', qty: 40, threshold: 10, cost: 1500 },
++    { name: 'Card Stock (A4)', sku: 'PAB-CARD-A4-001', category: 'paper', unit: 'pack', qty: 30, threshold: 8, cost: 1000 },
++  ];
++  for (const item of paberinInventoryItems) {
++    await prisma.inventoryItem.upsert({
++      where: { sku: item.sku },
++      update: {},
++      create: {
++        brand: Brand.PABERIN, name: item.name, sku: item.sku, category: item.category,
++        unit: item.unit, quantityInStock: item.qty, reorderThreshold: item.threshold,
++        unitCostNaira: item.cost,
++      },
++    });
++  }
++  console.log(`✓ Seeded ${paberinInventoryItems.length} Paberin inventory items`);
++
++  // Link services to their material (spec §6.1). One sheet ≈ 4 toppers/signs,
++  // so materialQtyPerUnit = 0.25; printed items consume card stock; sticks
++  // consume rod stock (1 stick ≈ 1 unit).
++  const serviceMaterialLinks: { type: string; sku: string; perUnit: number }[] = [
++    { type: 'paberin_topper_acrylic', sku: 'PAB-ACR-CLR-001', perUnit: 0.25 },
++    { type: 'paberin_topper_custom', sku: 'PAB-ACR-CLR-001', perUnit: 0.25 },
++    { type: 'paberin_topper_mirror', sku: 'PAB-ACR-MIR-001', perUnit: 0.25 },
++    { type: 'paberin_topper_wood', sku: 'PAB-WOOD-PLY-001', perUnit: 0.2 },
++    { type: 'paberin_signage_acrylic', sku: 'PAB-ACR-CLR-001', perUnit: 0.5 },
++    { type: 'paberin_signage_mirror', sku: 'PAB-ACR-MIR-001', perUnit: 0.5 },
++    { type: 'paberin_sheet_cutting', sku: 'PAB-ACR-CLR-001', perUnit: 1 },
++    { type: 'paberin_sheet_custom', sku: 'PAB-ACR-CLR-001', perUnit: 1 },
++    { type: 'paberin_sheet_oversize', sku: 'PAB-ACR-CLR-001', perUnit: 2 },
++    { type: 'paberin_acrylic_sticks', sku: 'PAB-ACR-ROD-001', perUnit: 1 },
++    { type: 'paberin_printed_card', sku: 'PAB-CARD-A4-001', perUnit: 0.05 },
++    { type: 'paberin_printed_tag', sku: 'PAB-CARD-A4-001', perUnit: 0.05 },
++  ];
++  for (const link of serviceMaterialLinks) {
++    const item = await prisma.inventoryItem.findUnique({ where: { sku: link.sku } });
++    if (!item) continue;
++    await prisma.service.updateMany({
++      where: { brand: Brand.PABERIN, type: link.type },
++      data: { materialStockItemId: item.id, materialQtyPerUnit: link.perUnit },
++    });
++  }
++  console.log(`✓ Linked ${serviceMaterialLinks.length} Paberin services to inventory`);
++
+   console.log('\nSeed complete!');
+ }
+ 
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/admin/orders/page.tsx copy/src/app/admin/orders/page.tsx
+--- a/src/app/admin/orders/page.tsx	2026-08-01 07:58:07.757392115 +0100
++++ b/src/app/admin/orders/page.tsx	2026-08-02 03:54:19.117303310 +0100
+@@ -18,13 +18,13 @@
+ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu';
+ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+ import { Badge } from '@/components/ui/badge';
+-import { Download, ChevronLeft, ChevronRight, MoreHorizontal, ArrowRight, Trash2, Pencil, RefreshCw, ShoppingBag, Layers, X, Upload, FileUp, FileText, AlertCircle, CheckCircle2, ArrowDownUp, AlertTriangle } from 'lucide-react';
++import { Download, ChevronLeft, ChevronRight, MoreHorizontal, ArrowRight, Trash2, Pencil, RefreshCw, ShoppingBag, Layers, X, Upload, FileUp, FileText, AlertCircle, CheckCircle2, ArrowDownUp, AlertTriangle, BadgeDollarSign } from 'lucide-react';
+ import { TableSkeleton } from '@/components/admin/Skeletons';
+ import { toast } from 'sonner';
+ import { useRouter } from 'next/navigation';
+ import { cn } from '@/lib/utils';
+ 
+-interface Order { id: string; orderNumber: string; brand: string; customerName: string; customerPhone: string; serviceLabel: string; serviceType: string; quantity: number; totalAmount: number; state: string; sla: string; createdAt: string; openEscalationCount?: number; }
++interface Order { id: string; orderNumber: string; brand: string; customerName: string; customerPhone: string; serviceLabel: string; serviceType: string; quantity: number; totalAmount: number; state: string; sla: string; createdAt: string; openEscalationCount?: number; needsReview?: boolean; }
+ interface OrdersResponse { orders: Order[]; meta: { page: number; limit: number; total: number; totalPages: number }; }
+ 
+ /* -------------------- Sort options -------------------- */
+@@ -199,6 +199,34 @@
+     }
+   }
+ 
++  /** One-click Approve & Price for provisional QUOTING orders (spec §5). */
++  async function handlePriceOrder(orderId: string, orderNumber: string) {
++    const input = window.prompt(`Set the price for ${orderNumber} (₦):`, '0');
++    if (input === null) return;
++    const amount = Number(String(input).replace(/[^\d.]/g, ''));
++    if (!Number.isFinite(amount) || amount < 0) {
++      toast.error('Enter a valid amount');
++      return;
++    }
++    setTransitioning(orderId);
++    try {
++      const res = await authFetch(`/api/admin/orders/${orderId}`, {
++        method: 'PATCH',
++        body: JSON.stringify({ action: 'price', totalAmount: amount }),
++      });
++      if (!res.ok) {
++        const body = await res.json().catch(() => ({}));
++        throw new Error(body?.error?.message ?? 'Failed to price order');
++      }
++      toast.success(`${orderNumber} priced at ${'₦' + amount.toLocaleString()} — customer can now pay`);
++      refetch();
++    } catch (err) {
++      toast.error(err instanceof Error ? err.message : 'Failed to price order');
++    } finally {
++      setTransitioning(null);
++    }
++  }
++
+   async function handleBulkTransition(newState: string) {
+     if (selectedIds.length === 0) return;
+     setBulkBusy(true);
+@@ -523,7 +551,14 @@
+                       </TableCell>
+                       <TableCell className="text-right font-mono">{o.quantity}</TableCell>
+                       <TableCell className="text-right"><PriceDisplay value={o.totalAmount} className="text-sm" /></TableCell>
+-                      <TableCell><StatusBadge state={o.state} /></TableCell>
++                      <TableCell>
++                        <div className="flex items-center gap-1.5">
++                          <StatusBadge state={o.state} />
++                          {(o as any).needsReview && (
++                            <Badge variant="outline" className="text-[10px] text-warning border-warning/30">review</Badge>
++                          )}
++                        </div>
++                      </TableCell>
+                       <TableCell><RelativeDate value={o.createdAt} /></TableCell>
+                       <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                         <DropdownMenu>
+@@ -534,6 +569,11 @@
+                           </DropdownMenuTrigger>
+                           <DropdownMenuContent align="end">
+                             <DropdownMenuLabel>Change status</DropdownMenuLabel>
++                            {o.state === 'QUOTING' && (
++                              <DropdownMenuItem onClick={() => handlePriceOrder(o.id, o.orderNumber)} data-testid={`order-price-${o.id}`}>
++                                <BadgeDollarSign className="h-3.5 w-3.5" /> Approve &amp; Price…
++                              </DropdownMenuItem>
++                            )}
+                             {nextStates.length > 0 ? (
+                               nextStates.map(s => (
+                                 <DropdownMenuItem key={s} onClick={() => handleTransition(o.id, o.orderNumber, s)} data-testid={`order-transition-${s}`}>
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/admin/notifications/recent/route.ts copy/src/app/api/admin/notifications/recent/route.ts
+--- a/src/app/api/admin/notifications/recent/route.ts	2026-07-02 07:42:14.000000000 +0100
++++ b/src/app/api/admin/notifications/recent/route.ts	2026-08-02 03:52:11.016703594 +0100
+@@ -34,7 +34,7 @@
+ 
+ export const runtime = 'nodejs';
+ 
+-type NotificationType = 'order_created' | 'order_transition' | 'escalation' | 'low_stock';
++type NotificationType = 'order_created' | 'order_transition' | 'escalation' | 'low_stock' | 'needs_pricing';
+ 
+ interface Notification {
+   id: string;
+@@ -101,8 +101,14 @@
+     quantityInStock: { lt: db.inventoryItem.fields.reorderThreshold },
+     ...(since ? { updatedAt: { gt: since } } : {}),
+   };
++  // Provisional QUOTING orders waiting for one-click pricing.
++  const quotingWhere = {
++    ...brandWhere,
++    state: 'QUOTING' as const,
++    ...(since ? { createdAt: { gt: since } } : {}),
++  };
+ 
+-  const [recentOrders, transitions, escalations, lowStockItems] = await Promise.all([
++  const [recentOrders, transitions, escalations, lowStockItems, quotingOrders] = await Promise.all([
+     db.order.findMany({
+       where: orderCreatedWhere,
+       orderBy: { createdAt: 'desc' },
+@@ -155,6 +161,18 @@
+         updatedAt: true,
+       },
+     }),
++    db.order.findMany({
++      where: quotingWhere,
++      orderBy: { createdAt: 'desc' },
++      take: limit,
++      select: {
++        id: true,
++        orderNumber: true,
++        brand: true,
++        customerName: true,
++        createdAt: true,
++      },
++    }),
+   ]);
+ 
+   const notifications: Notification[] = [];
+@@ -219,6 +237,23 @@
+       },
+     });
+   }
++
++  // 4. Provisional QUOTING orders — one-click Approve & Price needed.
++  for (const o of quotingOrders) {
++    notifications.push({
++      id: `needs_pricing-${o.id}`,
++      type: 'needs_pricing',
++      title: `Awaiting pricing: ${o.orderNumber}`,
++      description: `${o.customerName || 'Customer'} — one-click Approve & Price`,
++      timestamp: o.createdAt.toISOString(),
++      metadata: {
++        orderId: o.id,
++        orderNumber: o.orderNumber,
++        brand: o.brand,
++        customerName: o.customerName,
++      },
++    });
++  }
+ 
+   // 4. Low-stock items — use the item's updatedAt as the event timestamp
+   //    (any stock adjustment bumps updatedAt, so we only notify when the
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/admin/orders/[id]/route.ts copy/src/app/api/admin/orders/[id]/route.ts
+--- a/src/app/api/admin/orders/[id]/route.ts	2026-08-01 08:05:55.022566114 +0100
++++ b/src/app/api/admin/orders/[id]/route.ts	2026-08-02 03:52:18.198657738 +0100
+@@ -5,6 +5,7 @@
+ import { AdminRole, OrderState } from '@prisma/client';
+ import { transitionOrder, passAudit, flagAudit, VALID_TRANSITIONS } from '@/lib/order-state-machine';
+ import { refundPaystackPayment } from '@/lib/integrations';
++import { restockMaterialForOrder } from '@/lib/inventory';
+ import { logAudit, getClientIp } from '@/lib/admin/audit-log';
+ 
+ export const runtime = 'nodejs';
+@@ -148,6 +149,38 @@
+   const ip = getClientIp(req);
+ 
+   try {
++    if (action === 'price') {
++      // One-click Approve & Price for provisional QUOTING orders.
++      const amount = Number(body.totalAmount);
++      if (!Number.isFinite(amount) || amount < 0) {
++        return NextResponse.json({ error: { code: 'BAD_REQUEST', message: 'totalAmount must be a non-negative number' } }, { status: 400 });
++      }
++      const orderBefore = await db.order.findUnique({ where: { id } });
++      if (!orderBefore) return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, { status: 404 });
++      if (orderBefore.state !== OrderState.QUOTING) {
++        return NextResponse.json({ error: { code: 'NOT_QUOTING', message: `Order is in state ${orderBefore.state}, not QUOTING` } }, { status: 409 });
++      }
++
++      await db.order.update({
++        where: { id },
++        data: {
++          totalAmount: Math.round(amount),
++          serviceLabel: typeof body.serviceLabel === 'string' && body.serviceLabel.trim()
++            ? body.serviceLabel.trim().slice(0, 200)
++            : orderBefore.serviceLabel,
++        },
++      });
++      const result = await transitionOrder(id, OrderState.PAYMENT_PENDING, auth.user.sub, body.note || 'Custom job priced');
++      if (!result.ok) {
++        return NextResponse.json({ error: { code: 'INVALID_TRANSITION', message: result.error } }, { status: 409 });
++      }
++      await logAudit({
++        adminId: auth.user.sub, adminEmail: auth.user.email, action: 'PRICE_ORDER', entityType: 'ORDER',
++        entityId: orderBefore.orderNumber, ipAddress: ip,
++        details: `${orderBefore.orderNumber} priced at ₦${Math.round(amount)} (${orderBefore.state} → PAYMENT_PENDING)`,
++      });
++      return NextResponse.json({ data: result.order });
++    }
+     if (action === 'transition_state') {
+       const orderBefore = await db.order.findUnique({ where: { id }, select: { orderNumber: true, state: true } });
+       const result = await transitionOrder(id, body.toState as OrderState, auth.user.sub, body.note);
+@@ -252,6 +285,19 @@
+         entityId: orderBefore.orderNumber, ipAddress: ip,
+         details: `${orderBefore.orderNumber} refunded (${orderBefore.state} → REFUNDED) — ${body.reason || 'no reason given'}`,
+       });
++
++      // Restock material consumed at production start (spec §6.3).
++      if (['IN_PRODUCTION', 'READY', 'DISPATCHED', 'DELIVERED'].includes(orderBefore.state)) {
++        await restockMaterialForOrder({
++          id: orderBefore.id,
++          orderNumber: orderBefore.orderNumber,
++          serviceId: orderBefore.serviceId,
++          quantity: orderBefore.quantity,
++        }).catch((restockErr) => {
++          console.warn('[refund] material restock failed:', restockErr);
++        });
++      }
++
+       return NextResponse.json({ data: result.order });
+     }
+     return NextResponse.json({ error: { code: 'INVALID_ACTION', message: `Unknown action: ${action}` } }, { status: 400 });
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/escalations/route.ts copy/src/app/api/escalations/route.ts
+--- a/src/app/api/escalations/route.ts	2026-08-01 10:48:52.828758570 +0100
++++ b/src/app/api/escalations/route.ts	2026-08-02 03:51:43.471910900 +0100
+@@ -25,6 +25,14 @@
+     let order: any = null;
+     if (orderNumber) {
+       order = await db.order.findUnique({ where: { orderNumber } });
++      // Ownership check: the requesting phone must match the order's phone
++      // (variant-tolerant) — otherwise anyone could open escalations on any order.
++      if (order) {
++        const variants = new Set(phoneVariants(customerPhone));
++        if (!variants.has(order.customerPhone)) {
++          return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'This order belongs to a different customer.' } }, { status: 403 });
++        }
++      }
+     }
+ 
+     const ticketId = `ESC-${Date.now().toString(36).toUpperCase()}`;
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/magic-link/route.ts copy/src/app/api/magic-link/route.ts
+--- a/src/app/api/magic-link/route.ts	2026-08-01 10:47:51.184827892 +0100
++++ b/src/app/api/magic-link/route.ts	2026-08-02 03:51:43.468910926 +0100
+@@ -20,6 +20,12 @@
+   if (!isValidPhone(phone)) {
+     return NextResponse.json({ error: { code: "BAD_REQUEST", message: "Valid phone required (7–15 digits)" } }, { status: 400 });
+   }
++
++  // Optional brand filter — the Paberin dashboard must only see PABERIN
++  // orders even though both brands share this backend + phone numbers.
++  const brandFilter = typeof body.brand === 'string' && body.brand.trim()
++    ? String(body.brand).toUpperCase()
++    : null;
+   
+   // Build list of phone variants to try
+   const variants = new Set<string>();
+@@ -41,7 +47,7 @@
+   // Try exact matches first
+   const variantArray = Array.from(variants);
+   let orders = await db.order.findMany({ 
+-    where: { customerPhone: { in: variantArray } }, 
++    where: { customerPhone: { in: variantArray }, ...(brandFilter ? { brand: brandFilter as any } : {}) }, 
+     select: { orderNumber: true, state: true, serviceLabel: true, serviceType: true, quantity: true, totalAmount: true, sla: true, deliveryMethod: true, customerName: true, customerEmail: true, createdAt: true, brand: true }, 
+     orderBy: { createdAt: "desc" } 
+   });
+@@ -50,7 +56,7 @@
+   if (orders.length === 0 && last10digits.length >= 7) {
+     const last7 = last10digits.slice(-7);
+     orders = await db.order.findMany({ 
+-      where: { customerPhone: { contains: last7 } }, 
++      where: { customerPhone: { contains: last7 }, ...(brandFilter ? { brand: brandFilter as any } : {}) }, 
+       select: { orderNumber: true, state: true, serviceLabel: true, serviceType: true, quantity: true, totalAmount: true, sla: true, deliveryMethod: true, customerName: true, customerEmail: true, createdAt: true, brand: true }, 
+       orderBy: { createdAt: "desc" } 
+     });
+@@ -61,11 +67,10 @@
+   const customerName = orders[0]?.customerName || "Customer";
+   const customerEmail = orders[0]?.customerEmail || "";
+ 
+-  // Lifetime spend = sum of every order EXCEPT cancelled/refunded (mirrors the
+-  // admin customer-360 totalSpend calculation). Previously the dashboard only
+-  // counted DELIVERED/DISPATCHED, excluding paid in-progress orders (showed ₦0).
++  // Lifetime spend = sum of every order EXCEPT cancelled/refunded/unpaid (an
++  // unpaid QUOTING/PAYMENT_PENDING order must not inflate the customer's spend).
+   const lifetimeSpend = orders
+-    .filter((o: any) => o.state !== "CANCELLED" && o.state !== "REFUNDED")
++    .filter((o: any) => o.state !== "CANCELLED" && o.state !== "REFUNDED" && o.state !== "PAYMENT_PENDING" && o.state !== "QUOTING")
+     .reduce((sum: number, o: any) => sum + (o.totalAmount || 0), 0);
+   const totalOrders = orders.length;
+   const activeOrders = orders.filter((o: any) =>
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/orders/[orderNumber]/route.ts copy/src/app/api/orders/[orderNumber]/route.ts
+--- a/src/app/api/orders/[orderNumber]/route.ts	2026-07-18 22:13:20.168411218 +0100
++++ b/src/app/api/orders/[orderNumber]/route.ts	2026-08-02 03:51:26.187068218 +0100
+@@ -5,6 +5,7 @@
+ import { NextRequest, NextResponse } from 'next/server';
+ import { cancelOrderByCustomer, modifyOrderByCustomer } from '@/lib/order-state-machine';
+ import { db } from '@/lib/db';
++import { phoneVariants } from '@/lib/phone';
+ 
+ export const runtime = 'nodejs';
+ 
+@@ -14,12 +15,18 @@
+     const body = await req.json();
+     const action = body.action as 'cancel' | 'modify' | undefined;
+ 
+-    const phone = (body.customerPhone || '').toString();
+-    if (phone) {
+-      const order = await db.order.findUnique({ where: { orderNumber }, select: { customerPhone: true } });
+-      if (order && order.customerPhone !== phone) {
+-        return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'This order belongs to a different customer.' } }, { status: 403 });
+-      }
++    // Ownership check — REQUIRED and variant-tolerant (same phone formats as
++    // login: "0803…", "+234…", "234…", spaced). Omitting customerPhone is
++    // rejected instead of silently skipping the check.
++    const phone = (body.customerPhone || '').toString().trim();
++    if (!phone) {
++      return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'customerPhone is required to modify an order.' } }, { status: 403 });
++    }
++    const order = await db.order.findUnique({ where: { orderNumber }, select: { customerPhone: true } });
++    if (!order) return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Order not found' } }, { status: 404 });
++    const phoneVariantsSet = new Set(phoneVariants(phone));
++    if (!phoneVariantsSet.has(order.customerPhone)) {
++      return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'This order belongs to a different customer.' } }, { status: 403 });
+     }
+ 
+     if (action === 'cancel') {
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/orders/route.ts copy/src/app/api/orders/route.ts
+--- a/src/app/api/orders/route.ts	2026-08-01 10:47:41.078838674 +0100
++++ b/src/app/api/orders/route.ts	2026-08-02 03:50:53.974423382 +0100
+@@ -5,6 +5,9 @@
+ import { isValidPhone } from '@/lib/phone';
+ import { calculatePrice } from '@/lib/pricing-engine';
+ import { createOrderFromQuote } from '@/lib/order-state-machine';
++import { resolveDiscounts } from '@/lib/resolve-discounts';
++import { resolveCustomToService } from '@/lib/rule-lookup';
++import { getServiceAvailability } from '@/lib/inventory';
+ 
+ export const runtime = 'nodejs';
+ 
+@@ -48,10 +51,10 @@
+ export async function POST(req: NextRequest) {
+   try {
+     const body = await req.json();
+-    const { brand, serviceType, quantity, sla, addOns, addOnQuantities, isFirstTimeCustomer, firstTimeDiscountNaira, customerName, customerPhone, customerEmail, deliveryMethod, deliveryAddress, designFileUrl, designFilePublicId, customerNotes, paystackReference, referralCode } = body;
++    const { brand, serviceType, quantity, sla, addOns, addOnQuantities, isFirstTimeCustomer, customerName, customerPhone, customerEmail, deliveryMethod, deliveryAddress, designFileUrl, designFilePublicId, customerNotes, paystackReference, referralCode, customSpec } = body;
+ 
+-    if (!serviceType || !quantity || !customerName || !customerPhone || !customerEmail) {
+-      return NextResponse.json({ error: { code: 'MISSING_FIELDS', message: 'serviceType, quantity, customerName, customerPhone, customerEmail are required' } }, { status: 400 });
++    if ((!serviceType && !customSpec) || !quantity || !customerName || !customerPhone || !customerEmail) {
++      return NextResponse.json({ error: { code: 'MISSING_FIELDS', message: 'serviceType (or customSpec), quantity, customerName, customerPhone, customerEmail are required' } }, { status: 400 });
+     }
+ 
+     // Validate the phone format — customer identity is phone-based, so
+@@ -64,70 +67,153 @@
+     }
+ 
+     const brandUpper = (brand || 'SKYAL').toUpperCase() as Brand;
+-    const breakdown = await calculatePrice({
+-      brand: brandUpper, serviceType, quantity, sla: sla || 'Standard',
+-      addOns, addOnQuantities, isFirstTimeCustomer, firstTimeDiscountNaira,
+-      deliveryMethod, deliveryDistanceKm: deliveryAddress ? 10 : undefined,
+-    });
+-
+-    const service = await db.service.findFirst({ where: { brand: brandUpper, type: serviceType } });
+-    if (!service) return NextResponse.json({ error: { code: 'SERVICE_NOT_FOUND', message: `Service ${serviceType} not found` } }, { status: 400 });
+ 
+-    const order = await createOrderFromQuote({
++    // Discounts resolved ONCE here (and in the quote route) so quote and
++    // order always agree. Never client-supplied.
++    const discounts = await resolveDiscounts({
+       brand: brandUpper,
+-      serviceId: service.id, serviceType, serviceLabel: breakdown.serviceLabel,
+-      quantity: breakdown.quantity, sla: (sla === 'Express' ? SLA.EXPRESS : SLA.STANDARD),
+-      basePrice: breakdown.basePrice, expressSurcharge: breakdown.expressSurcharge,
+-      addOnsTotal: breakdown.addOnsTotal, discount: breakdown.discount,
+-      deliveryFee: breakdown.deliveryFee, totalAmount: breakdown.finalPriceNaira,
+-      customerName, customerPhone, customerEmail,
+-      deliveryMethod: deliveryMethod as DeliveryMethod,
+-      deliveryAddress: deliveryAddress ? JSON.stringify(deliveryAddress) : undefined,
+-      designFileUrl, designFilePublicId, customerNotes,
+-      paystackReference, referralCode,
++      phone: customerPhone,
++      referralCode: typeof referralCode === 'string' ? referralCode : undefined,
++      isFirstTimeCustomer: !!isFirstTimeCustomer,
+     });
+ 
+-    // Track referral usage — atomic increment guarded by maxUses. A referral
+-    // that is exhausted/invalid never blocks the order; it's just not counted.
+-    if (referralCode && typeof referralCode === 'string') {
+-      try {
+-        const referral = await db.referral.findFirst({
+-          where: { code: referralCode, brand: brandUpper, isActive: true },
+-          select: { id: true, usesCount: true, maxUses: true },
+-        });
+-        if (referral && (referral.maxUses === null || referral.usesCount < referral.maxUses)) {
++    // ── Tier 1: catalog service ────────────────────────────────────────────
++    if (serviceType) {
++      const breakdown = await calculatePrice({
++        brand: brandUpper, serviceType, quantity, sla: sla || 'Standard',
++        addOns, addOnQuantities,
++        firstTimeDiscountNaira: discounts.firstTimeDiscountNaira,
++        referralDiscountNaira: discounts.referralDiscountNaira,
++        deliveryMethod, deliveryDistanceKm: deliveryAddress ? 10 : undefined,
++      });
++
++      const service = await db.service.findFirst({ where: { brand: brandUpper, type: serviceType } });
++      if (!service) return NextResponse.json({ error: { code: 'SERVICE_NOT_FOUND', message: `Service ${serviceType} not found` } }, { status: 400 });
++
++      const order = await createOrderFromQuote({
++        brand: brandUpper,
++        serviceId: service.id, serviceType, serviceLabel: breakdown.serviceLabel,
++        quantity: breakdown.quantity,
++        sla: breakdown.expressApplied ? SLA.EXPRESS : SLA.STANDARD,
++        basePrice: breakdown.basePrice, expressSurcharge: breakdown.expressSurcharge,
++        addOnsTotal: breakdown.addOnsTotal, discount: breakdown.discount,
++        discountType: discounts.discountType,
++        deliveryFee: breakdown.deliveryFee, totalAmount: breakdown.finalPriceNaira,
++        customerName, customerPhone, customerEmail,
++        deliveryMethod: deliveryMethod as DeliveryMethod,
++        deliveryAddress: deliveryAddress || undefined, // stored RAW (no JSON.stringify)
++        designFileUrl, designFilePublicId, customerNotes,
++        paystackReference, referralCode,
++      });
++
++      // Referral usage — count ONLY when the discount was actually applied.
++      if (discounts.referralApplied && discounts.referralId) {
++        try {
+           const incremented = await db.referral.updateMany({
+             where: {
+-              id: referral.id,
+-              ...(referral.maxUses !== null ? { usesCount: { lt: referral.maxUses } } : {}),
++              id: discounts.referralId,
++              ...(await referralCapacityGuard(discounts.referralId)),
+             },
+             data: { usesCount: { increment: 1 } },
+           });
+           if (incremented.count !== 1) {
+             console.warn(`[Orders] Referral ${referralCode} hit maxUses concurrently — not counted`);
+           }
+-        } else if (referral) {
+-          console.warn(`[Orders] Referral ${referralCode} exhausted (${referral.usesCount}/${referral.maxUses}) — not counted`);
++        } catch (refErr) {
++          console.warn('[Orders] Referral tracking failed:', refErr);
+         }
+-      } catch (refErr) {
+-        console.warn('[Orders] Referral tracking failed:', refErr);
+       }
++
++      const availability = await getServiceAvailability(service, breakdown.quantity);
++
++      return NextResponse.json({ data: { ...order, availability } }, { status: 201 });
+     }
+ 
++    // ── Tier 2: custom job → rule lookup, else provisional QUOTING order ───
++    const spec = (customSpec && typeof customSpec === 'object' ? customSpec : {}) as {
++      description?: string; material?: string; dimensions?: string; complexity?: string;
++    };
++    const rule = await resolveCustomToService(brandUpper, spec);
++    const customDescription = [spec.description, spec.material, spec.dimensions]
++      .filter(Boolean).join(' — ') || 'Custom job';
++
++    if (rule.serviceType) {
++      // A price rule exists (e.g. jeans → fabric_custom) — instant pricing.
++      const breakdown = await calculatePrice({
++        brand: brandUpper, serviceType: rule.serviceType, quantity, sla: sla || 'Standard',
++        addOns, addOnQuantities,
++        firstTimeDiscountNaira: discounts.firstTimeDiscountNaira,
++        referralDiscountNaira: discounts.referralDiscountNaira,
++        deliveryMethod, deliveryDistanceKm: deliveryAddress ? 10 : undefined,
++      });
++      const service = await db.service.findFirst({ where: { brand: brandUpper, type: rule.serviceType } });
++      if (service) {
++        const order = await createOrderFromQuote({
++          brand: brandUpper,
++          serviceId: service.id, serviceType: rule.serviceType, serviceLabel: breakdown.serviceLabel,
++          quantity: breakdown.quantity,
++          sla: breakdown.expressApplied ? SLA.EXPRESS : SLA.STANDARD,
++          basePrice: breakdown.basePrice, expressSurcharge: breakdown.expressSurcharge,
++          addOnsTotal: breakdown.addOnsTotal, discount: breakdown.discount,
++          discountType: discounts.discountType,
++          deliveryFee: breakdown.deliveryFee, totalAmount: breakdown.finalPriceNaira,
++          customerName, customerPhone, customerEmail,
++          deliveryMethod: deliveryMethod as DeliveryMethod,
++          deliveryAddress: deliveryAddress || undefined,
++          designFileUrl, designFilePublicId,
++          customerNotes: [`CUSTOM REQUEST: ${customDescription}`, customerNotes].filter(Boolean).join('\n\n'),
++          paystackReference, referralCode,
++          needsReview: true, // admin sees it flagged; no action required
++        });
++        const availability = await getServiceAvailability(service, breakdown.quantity);
++        return NextResponse.json({ data: { ...order, availability } }, { status: 201 });
++      }
++    }
++
++    // No rule — provisional order in QUOTING; one-click Approve & Price in admin.
++    const customJob = await db.service.findFirst({ where: { brand: brandUpper, type: `${brandUpper === Brand.PABERIN ? 'paberin_' : ''}custom_job` } });
++    if (!customJob) {
++      return NextResponse.json({ error: { code: 'CUSTOM_JOB_NOT_CONFIGURED', message: 'Custom job service is not configured. Please contact support.' } }, { status: 500 });
++    }
++    const order = await createOrderFromQuote({
++      brand: brandUpper,
++      serviceId: customJob.id,
++      serviceType: customJob?.type || 'custom_job',
++      serviceLabel: 'Custom Job (Awaiting Pricing)',
++      quantity: Math.max(1, Number(quantity) || 1),
++      sla: SLA.STANDARD,
++      basePrice: 0, expressSurcharge: 0, addOnsTotal: 0, discount: 0, deliveryFee: 0, totalAmount: 0,
++      customerName, customerPhone, customerEmail,
++      deliveryMethod: deliveryMethod as DeliveryMethod,
++      deliveryAddress: deliveryAddress || undefined,
++      designFileUrl, designFilePublicId,
++      customerNotes: [`CUSTOM REQUEST: ${customDescription}`, customerNotes].filter(Boolean).join('\n\n'),
++      paystackReference, referralCode,
++      needsReview: true,
++      state: OrderState.QUOTING,
++    });
+     return NextResponse.json({ data: order }, { status: 201 });
+   } catch (e: any) {
+     return NextResponse.json({ error: { code: 'ORDER_CREATE_ERROR', message: e.message } }, { status: 500 });
+   }
+ }
+ 
++/** maxUses guard for the referral increment (null maxUses = unlimited). */
++async function referralCapacityGuard(referralId: string) {
++  const referral = await db.referral.findUnique({
++    where: { id: referralId },
++    select: { maxUses: true },
++  });
++  return referral?.maxUses !== null && referral?.maxUses !== undefined ? { usesCount: { lt: referral.maxUses } } : {};
++}
++
+ export async function GET(req: NextRequest) {
+   const orderNumber = req.nextUrl.searchParams.get('id');
+-  const token = req.nextUrl.searchParams.get('token');
+   const reference = req.nextUrl.searchParams.get('reference');
+   const brandFilter = req.nextUrl.searchParams.get('brand')?.toUpperCase();
+ 
+-  if (!orderNumber && !token && !reference) {
+-    return NextResponse.json({ error: { code: 'MISSING_ID', message: 'Order ID, token, or payment reference required' } }, { status: 400 });
++  if (!orderNumber && !reference) {
++    return NextResponse.json({ error: { code: 'MISSING_ID', message: 'Order ID or payment reference required' } }, { status: 400 });
+   }
+ 
+   let order;
+@@ -164,30 +250,27 @@
+     ? realTransitions.map(t => ({ state: t.toState, timestamp: t.createdAt, note: t.note, changedBy: t.changedBy }))
+     : synthesizeTimeline(order.createdAt, order.updatedAt, order.state);
+ 
++  // NOTE: this is an UNAUTHENTICATED endpoint — deliberately NO customer
++  // email/phone and NO trackingPin in the response (PII minimization).
+   return NextResponse.json({
+     data: {
+       orderNumber: order.orderNumber,
+       brand: order.brand,
+       customerName: order.customerName,
+-      customerPhone: order.customerPhone,
+-      customerEmail: order.customerEmail,
+       serviceLabel: order.serviceLabel,
+       serviceType: order.serviceType,
+       quantity: order.quantity,
+       totalAmount: order.totalAmount,
+       sla: order.sla,
+       state: order.state,
+-      paystackReference: order.paystackReference,
+       createdAt: order.createdAt,
+       updatedAt: order.updatedAt,
+       deliveryMethod: order.deliveryMethod,
+       deliveryAddress: order.deliveryAddress,
+       designFileUrl: order.designFileUrl,
+-      customerNotes: order.customerNotes,
+       gracePeriodExpires: order.gracePeriodExpires,
+       canModify: isModifiable,
+       canCancel: isModifiable,
+-      trackingPin: order.trackingPin,
+       timeline,
+     },
+   });
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/quotes/[id]/accept/route.ts copy/src/app/api/quotes/[id]/accept/route.ts
+--- a/src/app/api/quotes/[id]/accept/route.ts	1970-01-01 01:00:00.000000000 +0100
++++ b/src/app/api/quotes/[id]/accept/route.ts	2026-08-02 03:51:12.544208396 +0100
+@@ -0,0 +1,79 @@
++/** POST /api/quotes/[id]/accept — Turn a saved quote snapshot into an order.
++ *  The order is created from the SNAPSHOT (never a recompute), so the price
++ *  the customer accepts is exactly the price they were quoted. */
++import { NextRequest, NextResponse } from 'next/server';
++import { db } from '@/lib/db';
++import { isValidPhone, phoneVariants } from '@/lib/phone';
++import { createOrderFromQuote } from '@/lib/order-state-machine';
++import { OrderState, SLA } from '@prisma/client';
++
++export const runtime = 'nodejs';
++
++export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
++  try {
++    const { id } = await params;
++    const body = await req.json().catch(() => ({}));
++    const phone = (body.customerPhone || '').toString();
++    if (!isValidPhone(phone)) {
++      return NextResponse.json({ error: { code: 'BAD_REQUEST', message: 'Valid phone required (7–15 digits)' } }, { status: 400 });
++    }
++
++    const quote = await db.quote.findUnique({ where: { id } });
++    if (!quote) return NextResponse.json({ error: { code: 'NOT_FOUND', message: 'Quote not found' } }, { status: 404 });
++
++    // Ownership: the accepting phone must match the quote's phone.
++    const variants = phoneVariants(phone);
++    if (!variants.includes(quote.customerPhone)) {
++      return NextResponse.json({ error: { code: 'FORBIDDEN', message: 'This quote belongs to a different customer.' } }, { status: 403 });
++    }
++    if (quote.status !== 'OPEN') {
++      return NextResponse.json({ error: { code: 'QUOTE_NOT_OPEN', message: `Quote is ${quote.status}` } }, { status: 409 });
++    }
++    if (quote.expiresAt && new Date() > quote.expiresAt) {
++      await db.quote.update({ where: { id }, data: { status: 'EXPIRED' } }).catch(() => {});
++      return NextResponse.json({ error: { code: 'QUOTE_EXPIRED', message: 'This quote has expired — please request a fresh quote.' } }, { status: 410 });
++    }
++
++    // Reconstruct the request + resolve the service.
++    let request: any = {};
++    try { request = JSON.parse(quote.requestJson); } catch { /* keep {} */ }
++    const quantity = Math.max(1, Number(request.quantity) || 1);
++    const serviceType = quote.serviceType || request.serviceType;
++    const service = serviceType
++      ? await db.service.findFirst({ where: { brand: quote.brand, type: serviceType } })
++      : null;
++    if (!service) {
++      return NextResponse.json({ error: { code: 'SERVICE_NOT_FOUND', message: 'The quoted service is no longer available.' } }, { status: 409 });
++    }
++
++    const order = await createOrderFromQuote({
++      brand: quote.brand,
++      serviceId: service.id,
++      serviceType: service.type,
++      serviceLabel: service.label,
++      quantity,
++      sla: (request.sla === 'Express' && service.allowExpress) ? SLA.EXPRESS : SLA.STANDARD,
++      basePrice: 0, // snapshot pricing — stored breakdown fields are informational
++      expressSurcharge: 0,
++      addOnsTotal: 0,
++      discount: quote.discount,
++      discountType: 'NONE',
++      deliveryFee: quote.deliveryFee,
++      totalAmount: quote.totalAmount,
++      customerName: request.customerName || 'Customer',
++      customerPhone: quote.customerPhone,
++      customerEmail: request.customerEmail || '',
++      deliveryMethod: request.deliveryMethod || undefined,
++      deliveryAddress: request.deliveryAddress || undefined,
++      designFileUrl: request.designFileUrl,
++      customerNotes: request.customerNotes || undefined,
++      state: OrderState.PAYMENT_PENDING,
++    });
++
++    await db.quote.update({ where: { id }, data: { status: 'ACCEPTED', orderId: order.id } });
++
++    return NextResponse.json({ data: order }, { status: 201 });
++  } catch (e: any) {
++    return NextResponse.json({ error: { code: 'QUOTE_ACCEPT_ERROR', message: e.message } }, { status: 500 });
++  }
++}
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/quotes/route.ts copy/src/app/api/quotes/route.ts
+--- a/src/app/api/quotes/route.ts	1970-01-01 01:00:00.000000000 +0100
++++ b/src/app/api/quotes/route.ts	2026-08-02 03:51:12.538208460 +0100
+@@ -0,0 +1,35 @@
++/** GET /api/quotes?phone=… — List a customer's saved quote snapshots. */
++import { NextRequest, NextResponse } from 'next/server';
++import { db } from '@/lib/db';
++import { isValidPhone, phoneVariants } from '@/lib/phone';
++
++export const runtime = 'nodejs';
++
++export async function GET(req: NextRequest) {
++  const phone = req.nextUrl.searchParams.get('phone');
++  if (!phone || !isValidPhone(phone)) {
++    return NextResponse.json({ error: { code: 'BAD_REQUEST', message: 'Valid phone required (7–15 digits)' } }, { status: 400 });
++  }
++
++  const variants = phoneVariants(phone);
++  const quotes = await db.quote.findMany({
++    where: { customerPhone: { in: variants }, status: 'OPEN' },
++    orderBy: { createdAt: 'desc' },
++    take: 20,
++  });
++
++  return NextResponse.json({
++    data: quotes.map((q) => ({
++      id: q.id,
++      quoteNumber: q.quoteNumber,
++      totalAmount: q.totalAmount,
++      discount: q.discount,
++      deliveryFee: q.deliveryFee,
++      serviceType: q.serviceType,
++      status: q.status,
++      expiresAt: q.expiresAt,
++      createdAt: q.createdAt,
++      requestJson: q.requestJson,
++    })),
++  });
++}
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/app/api/services/quote/route.ts copy/src/app/api/services/quote/route.ts
+--- a/src/app/api/services/quote/route.ts	2026-07-02 07:42:14.000000000 +0100
++++ b/src/app/api/services/quote/route.ts	2026-08-02 03:51:02.090325880 +0100
+@@ -1,23 +1,75 @@
+-/** POST /api/services/quote — Calculate price quote */
++/** POST /api/services/quote — Calculate price quote (and persist a snapshot) */
+ import { NextRequest, NextResponse } from 'next/server';
+ import { Brand } from '@prisma/client';
+ import { calculatePrice } from '@/lib/pricing-engine';
++import { resolveDiscounts, getSetting } from '@/lib/resolve-discounts';
++import { getServiceAvailability } from '@/lib/inventory';
++import { db } from '@/lib/db';
+ 
+ export const runtime = 'nodejs';
+ 
+ export async function POST(req: NextRequest) {
+   try {
+     const body = await req.json();
+-    const { brand, serviceType, quantity, sla, addOns, addOnQuantities, isFirstTimeCustomer, firstTimeDiscountNaira, deliveryMethod, deliveryDistanceKm } = body;
++    const { brand, serviceType, quantity, sla, addOns, addOnQuantities, isFirstTimeCustomer, deliveryMethod, deliveryDistanceKm, referralCode, customerPhone } = body;
+     if (!serviceType || !quantity) return NextResponse.json({ error: { code: 'MISSING_FIELDS', message: 'serviceType and quantity are required' } }, { status: 400 });
+ 
++    const brandUpper = (brand || 'SKYAL').toUpperCase() as Brand;
++
++    // Same discount resolution as POST /api/orders — quote and order agree.
++    const discounts = await resolveDiscounts({
++      brand: brandUpper,
++      phone: typeof customerPhone === 'string' ? customerPhone : undefined,
++      referralCode: typeof referralCode === 'string' ? referralCode : undefined,
++      isFirstTimeCustomer: !!isFirstTimeCustomer,
++    });
++
+     const breakdown = await calculatePrice({
+-      brand: (brand || 'SKYAL').toUpperCase() as Brand,
+-      serviceType, quantity, sla: sla || 'Standard',
+-      addOns, addOnQuantities, isFirstTimeCustomer, firstTimeDiscountNaira,
++      brand: brandUpper, serviceType, quantity, sla: sla || 'Standard',
++      addOns, addOnQuantities,
++      firstTimeDiscountNaira: discounts.firstTimeDiscountNaira,
++      referralDiscountNaira: discounts.referralDiscountNaira,
+       deliveryMethod, deliveryDistanceKm,
+     });
+-    return NextResponse.json({ data: { quoteNaira: breakdown.finalPriceNaira, breakdown } });
++
++    const service = await db.service.findFirst({ where: { brand: brandUpper, type: serviceType } });
++    const availability = service ? await getServiceAvailability(service, breakdown.quantity) : null;
++
++    // Persist the price snapshot (the "same price when they come back"
++    // guarantee). Only saved when the customer is known.
++    let quoteSnapshot: { id: string; quoteNumber: string; expiresAt: Date | null } | null = null;
++    if (typeof customerPhone === 'string' && customerPhone.trim()) {
++      try {
++        const expiryDays = Number.parseInt(await getSetting(brandUpper, 'quote_expiry_days', '7'), 10) || 7;
++        const expiresAt = new Date(Date.now() + expiryDays * 24 * 60 * 60 * 1000);
++        const created = await db.quote.create({
++          data: {
++            quoteNumber: `QT-${brandUpper === Brand.PABERIN ? 'PAB' : 'SKY'}-${Date.now().toString(36).toUpperCase()}`,
++            brand: brandUpper,
++            customerPhone: customerPhone.trim(),
++            requestJson: JSON.stringify(body),
++            serviceType,
++            totalAmount: breakdown.finalPriceNaira,
++            discount: breakdown.discount,
++            deliveryFee: breakdown.deliveryFee,
++            status: 'OPEN',
++            expiresAt,
++          },
++        });
++        quoteSnapshot = { id: created.id, quoteNumber: created.quoteNumber, expiresAt: created.expiresAt };
++      } catch (err) {
++        console.warn('[Quote] snapshot save failed (non-fatal):', err);
++      }
++    }
++
++    return NextResponse.json({
++      data: {
++        quoteNaira: breakdown.finalPriceNaira,
++        breakdown,
++        availability,
++        ...(quoteSnapshot ? { quoteId: quoteSnapshot.id, quoteNumber: quoteSnapshot.quoteNumber, quoteExpiresAt: quoteSnapshot.expiresAt } : {}),
++      },
++    });
+   } catch (e: any) {
+     return NextResponse.json({ error: { code: 'QUOTE_ERROR', message: e.message } }, { status: 400 });
+   }
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/lib/inventory.ts copy/src/lib/inventory.ts
+--- a/src/lib/inventory.ts	1970-01-01 01:00:00.000000000 +0100
++++ b/src/lib/inventory.ts	2026-08-02 03:55:21.321361752 +0100
+@@ -0,0 +1,169 @@
++/**
++ * Inventory helpers — availability, production consumption, restock.
++ *
++ * Spec §6: services link to an InventoryItem via Service.materialStockItemId.
++ * Availability shown to customers = on-hand − material promised to paid
++ * orders waiting in IN_QUEUE. Consumption happens atomically at production
++ * start (IN_QUEUE → IN_PRODUCTION); refunds of produced orders restock.
++ */
++import { db } from '@/lib/db';
++
++export interface Availability {
++  status: 'IN_STOCK' | 'LOW' | 'OUT_OF_STOCK';
++  remaining: number;
++  etaDays?: number;
++}
++
++interface MaterialService {
++  id: string;
++  materialStockItemId: string | null;
++  materialQtyPerUnit: number;
++}
++
++/** Available-for-promise for a service × quantity (null when no stock link). */
++export async function getServiceAvailability(
++  service: MaterialService,
++  quantity: number
++): Promise<Availability | null> {
++  if (!service.materialStockItemId) return null;
++  const [item, pendingRows] = await Promise.all([
++    db.inventoryItem.findUnique({
++      where: { id: service.materialStockItemId },
++      select: { quantityInStock: true, reorderThreshold: true },
++    }),
++    db.order.findMany({
++      where: { serviceId: service.id, state: 'IN_QUEUE' },
++      select: { quantity: true },
++    }),
++  ]);
++  if (!item) return null;
++  const pending = pendingRows.reduce((sum, o) => sum + o.quantity * service.materialQtyPerUnit, 0);
++  const remaining = Math.max(0, Math.floor(item.quantityInStock - pending));
++  const status = remaining <= 0 ? 'OUT_OF_STOCK' : remaining <= item.reorderThreshold ? 'LOW' : 'IN_STOCK';
++  return {
++    status,
++    remaining,
++    etaDays: status === 'OUT_OF_STOCK' ? 3 : status === 'LOW' ? 2 : undefined,
++  };
++}
++
++/** Material needed (units of the stock item) for an order. */
++export async function materialNeededForOrder(order: {
++  serviceId: string;
++  quantity: number;
++}): Promise<{ itemId: string; itemName: string; needed: number } | null> {
++  const service = await db.service.findUnique({
++    where: { id: order.serviceId },
++    select: { materialStockItemId: true, materialQtyPerUnit: true, label: true },
++  });
++  if (!service?.materialStockItemId) return null;
++  const item = await db.inventoryItem.findUnique({
++    where: { id: service.materialStockItemId },
++    select: { name: true },
++  });
++  if (!item) return null;
++  return { itemId: service.materialStockItemId, itemName: item.name, needed: Math.ceil(order.quantity * service.materialQtyPerUnit) };
++}
++
++/**
++ * Atomically consume material for an order (production start).
++ * CAS-guarded: only succeeds while enough stock remains.
++ */
++export async function consumeMaterialForOrder(order: {
++  id: string;
++  orderNumber: string;
++  brand: string;
++  serviceId: string;
++  quantity: number;
++}): Promise<{ ok: true } | { ok: false; error: string }> {
++  const mat = await materialNeededForOrder(order);
++  if (!mat) return { ok: true }; // no stock link (customer-supplied / custom job)
++
++  const res = await db.inventoryItem.updateMany({
++    where: { id: mat.itemId, quantityInStock: { gte: mat.needed } },
++    data: { quantityInStock: { decrement: mat.needed } },
++  });
++  if (res.count !== 1) {
++    const item = await db.inventoryItem.findUnique({
++      where: { id: mat.itemId },
++      select: { quantityInStock: true },
++    });
++    const have = item?.quantityInStock ?? 0;
++    await flagBlockedProduction(order, mat.itemName, mat.needed, have);
++    return { ok: false, error: `Insufficient stock: ${mat.itemName} — need ${mat.needed}, have ${have}` };
++  }
++
++  await db.inventoryTransaction.create({
++    data: {
++      itemId: mat.itemId,
++      type: 'PRODUCTION_CONSUMPTION',
++      quantity: -mat.needed,
++      reason: `Order ${order.orderNumber} production start`,
++      orderId: order.id,
++    },
++  });
++  return { ok: true };
++}
++
++/** Restock material for a refunded order that already consumed it. */
++export async function restockMaterialForOrder(order: {
++  id: string;
++  orderNumber: string;
++  serviceId: string;
++  quantity: number;
++}): Promise<void> {
++  const mat = await materialNeededForOrder(order);
++  if (!mat) return;
++  await db.inventoryItem.update({
++    where: { id: mat.itemId },
++    data: { quantityInStock: { increment: mat.needed } },
++  });
++  await db.inventoryTransaction.create({
++    data: {
++      itemId: mat.itemId,
++      type: 'REFUND_RESTOCK',
++      quantity: mat.needed,
++      reason: `Refund of order ${order.orderNumber}`,
++      orderId: order.id,
++    },
++  });
++}
++
++/**
++ * Best-effort admin visibility when production can't start: append a note to
++ * the order and draft a purchase order so the shortage is actionable.
++ */
++async function flagBlockedProduction(
++  order: { id: string; orderNumber: string; brand: string },
++  itemName: string,
++  needed: number,
++  have: number
++): Promise<void> {
++  try {
++    await db.order.update({
++      where: { id: order.id },
++      data: {
++        adminNotes: `BLOCKED at production start: insufficient ${itemName} (need ${needed}, have ${have}). Restock or override.`,
++      },
++    });
++  } catch {
++    // non-fatal
++  }
++  try {
++    const supplier = await db.supplier.findFirst({ select: { id: true } });
++    if (supplier) {
++      await db.purchaseOrder.create({
++        data: {
++          poNumber: `PO-${Date.now()}`,
++          supplierId: supplier.id,
++          brand: (order.brand as 'SKYAL' | 'PABERIN') || 'PABERIN',
++          items: JSON.stringify([{ name: itemName, qty: Math.max(needed * 2, 5), unitCost: 0 }]),
++          totalAmount: 0,
++          status: 'PENDING',
++        },
++      });
++    }
++  } catch {
++    // non-fatal — draft PO is a convenience
++  }
++}
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/lib/order-state-machine.ts copy/src/lib/order-state-machine.ts
+--- a/src/lib/order-state-machine.ts	2026-08-01 07:50:16.803268855 +0100
++++ b/src/lib/order-state-machine.ts	2026-08-02 03:50:25.194816313 +0100
+@@ -5,6 +5,8 @@
+ import { OrderState, SLA, Brand, DeliveryMethod } from '@prisma/client';
+ import * as crypto from 'crypto';
+ import { db } from '@/lib/db';
++import { calculatePrice } from '@/lib/pricing-engine';
++import { consumeMaterialForOrder, restockMaterialForOrder } from '@/lib/inventory';
+ 
+ // Valid transitions per spec
+ export const VALID_TRANSITIONS: Record<OrderState, OrderState[]> = {
+@@ -93,6 +95,22 @@
+     return { ok: false, error: 'Audit gate: order must pass file audit before entering production queue.' };
+   }
+ 
++  // Inventory gate (spec §6.3): at production start the linked material is
++  // consumed ATOMICALLY before the transition; on insufficient stock the
++  // transition is blocked (order stays IN_QUEUE, admin alerted, PO drafted).
++  if (newState === OrderState.IN_PRODUCTION && order.state === OrderState.IN_QUEUE) {
++    const consume = await consumeMaterialForOrder({
++      id: order.id,
++      orderNumber: order.orderNumber,
++      brand: order.brand,
++      serviceId: order.serviceId,
++      quantity: order.quantity,
++    });
++    if (!consume.ok) {
++      return { ok: false, error: consume.error };
++    }
++  }
++
+   const updated = await db.order.updateMany({
+     // Atomic compare-and-swap: only succeeds if the order is still in the
+     // state we validated, so two concurrent transitions can't both win.
+@@ -100,6 +118,15 @@
+     data: { state: newState },
+   });
+   if (updated.count !== 1) {
++    // We consumed material but lost the race — restore it best-effort.
++    if (newState === OrderState.IN_PRODUCTION && order.state === OrderState.IN_QUEUE) {
++      await restockMaterialForOrder({
++        id: order.id,
++        orderNumber: order.orderNumber,
++        serviceId: order.serviceId,
++        quantity: order.quantity,
++      }).catch(() => {});
++    }
+     return { ok: false, error: `Order state changed concurrently — please retry (${order.state} → ${newState})` };
+   }
+ 
+@@ -202,6 +229,7 @@
+   expressSurcharge: number;
+   addOnsTotal: number;
+   discount: number;
++  discountType?: string;
+   deliveryFee: number;
+   totalAmount: number;
+   customerName: string;
+@@ -214,11 +242,14 @@
+   customerNotes?: string;
+   paystackReference?: string;
+   referralCode?: string;
++  needsReview?: boolean;
++  state?: OrderState; // default PAYMENT_PENDING (provisional QUOTING for unpriced custom jobs)
+ }): Promise<any> {
+   const orderNumber = await generateUniqueOrderNumber(params.brand);
+   const trackingPin = params.deliveryMethod === DeliveryMethod.PICKUP ? generateTrackingPin() : null;
+   const gracePeriodExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+   const magicToken = generateMagicToken();
++  const initialState = params.state || OrderState.PAYMENT_PENDING;
+ 
+   const order = await db.order.create({
+     data: {
+@@ -244,11 +275,13 @@
+       designFileUrl: params.designFileUrl,
+       designFilePublicId: params.designFilePublicId,
+       customerNotes: params.customerNotes,
+-      state: OrderState.PAYMENT_PENDING,
++      state: initialState,
+       gracePeriodExpires,
+       paystackReference: params.paystackReference,
+       referralCode: params.referralCode,
+-      stateHistory: JSON.stringify([{ state: 'PAYMENT_PENDING', timestamp: new Date().toISOString() }]),
++      discountType: params.discountType || 'NONE',
++      needsReview: params.needsReview ?? false,
++      stateHistory: JSON.stringify([{ state: initialState, timestamp: new Date().toISOString() }]),
+     },
+   });
+ 
+@@ -291,13 +324,41 @@
+ 
+   const data: any = {};
+   const notes: string[] = [];
++
++  // Quantity change → re-price through the SAME pricing engine as the quote,
++  // so the new total is exact (fixed fees like delivery are NOT scaled
++  // per-unit — the old `unitPrice × newQty` math over/under-charged).
+   if (changes.quantity !== undefined && changes.quantity !== order.quantity) {
+     if (changes.quantity < 1) return { ok: false, error: 'Quantity must be at least 1.' };
+-    const unitPrice = order.quantity > 0 ? order.totalAmount / order.quantity : 0;
+-    const newTotal = Math.round(unitPrice * changes.quantity);
+-    data.quantity = changes.quantity;
+-    data.totalAmount = newTotal;
+-    data.basePrice = Math.round((order.basePrice / order.quantity) * changes.quantity);
++
++    // Paid orders: the money is already collected — v1 blocks customer
++    // modification of paid orders (delta-payment/refund flows are out of
++    // scope). Unpaid (PAYMENT_PENDING) orders may change freely.
++    if (order.state === OrderState.PAYMENT_SUCCESS) {
++      return { ok: false, error: 'This order is already paid — contact us to change it.' };
++    }
++
++    const service = await db.service.findFirst({
++      where: { brand: order.brand, type: order.serviceType },
++    });
++    if (!service) return { ok: false, error: 'Service no longer available for re-pricing.' };
++
++    const breakdown = await calculatePrice({
++      brand: order.brand,
++      serviceType: order.serviceType,
++      quantity: changes.quantity,
++      sla: order.sla === SLA.EXPRESS ? 'Express' : 'Standard',
++      deliveryMethod: order.deliveryMethod || undefined,
++      deliveryDistanceKm: order.deliveryAddress ? 10 : undefined,
++    });
++
++    data.quantity = breakdown.quantity;
++    data.basePrice = breakdown.basePrice;
++    data.expressSurcharge = breakdown.expressSurcharge;
++    data.addOnsTotal = breakdown.addOnsTotal;
++    data.discount = 0; // discounts were already applied at creation
++    data.deliveryFee = breakdown.deliveryFee;
++    data.totalAmount = breakdown.finalPriceNaira;
+     notes.push(`quantity ${order.quantity} → ${changes.quantity}`);
+   }
+   if (changes.deliveryAddress !== undefined && changes.deliveryAddress !== order.deliveryAddress) {
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/lib/pricing-engine.ts copy/src/lib/pricing-engine.ts
+--- a/src/lib/pricing-engine.ts	2026-07-02 07:42:14.000000000 +0100
++++ b/src/lib/pricing-engine.ts	2026-08-02 03:49:56.337290841 +0100
+@@ -12,6 +12,7 @@
+   sla?: 'Standard' | 'Express';
+   isFirstTimeCustomer?: boolean;
+   firstTimeDiscountNaira?: number;
++  referralDiscountNaira?: number;
+   addOns?: string[]; // service types
+   addOnQuantities?: number[];
+   deliveryMethod?: string;
+@@ -25,9 +26,11 @@
+   quantity: number;
+   subtotal: number;
+   expressSurcharge: number;
++  expressApplied: boolean;
+   addOnsTotal: number;
+   addOnsDetails: { label: string; price: number; quantity: number }[];
+   discount: number;
++  discountType: 'REFERRAL' | 'FIRST_TIME' | 'NONE';
+   deliveryFee: number;
+   vat: number; // ALWAYS 0
+   finalPriceNaira: number;
+@@ -59,9 +62,11 @@
+ 
+   // 2. Express surcharge
+   let expressSurcharge = 0;
++  let expressApplied = false;
+   let leadTime = service.standardLeadTime;
+   if (sla === 'Express' && service.allowExpress) {
+     expressSurcharge = Math.round(subtotal * service.expressSurchargePct);
++    expressApplied = true;
+     leadTime = service.expressLeadTime || leadTime;
+   } else if (sla === 'Express' && !service.allowExpress) {
+     notes.push('Express is NOT available for this service. Standard lead time applies.');
+@@ -85,10 +90,20 @@
+     }
+   }
+ 
+-  // 4. Discount
++  // 4. Discount — referral and first-time NEVER stack; the larger wins.
++  //    The calling routes resolve both amounts via resolveDiscounts() so the
++  //    quote and the order always apply the same discount.
+   let discount = 0;
+-  if (input.isFirstTimeCustomer && input.firstTimeDiscountNaira) {
+-    discount = input.firstTimeDiscountNaira;
++  let discountType: 'REFERRAL' | 'FIRST_TIME' | 'NONE' = 'NONE';
++  const firstTime = input.firstTimeDiscountNaira || 0;
++  const referral = input.referralDiscountNaira || 0;
++  if (referral > 0 && referral >= firstTime) {
++    discount = referral;
++    discountType = 'REFERRAL';
++    notes.push(`Referral discount of ₦${referral.toLocaleString('en-NG')} applied.`);
++  } else if (firstTime > 0) {
++    discount = firstTime;
++    discountType = 'FIRST_TIME';
+     notes.push('First-time customer discount applied (ONE-TIME ONLY). This discount will NOT be applied to future orders.');
+   }
+ 
+@@ -131,9 +146,11 @@
+     quantity: qty,
+     subtotal,
+     expressSurcharge,
++    expressApplied,
+     addOnsTotal,
+     addOnsDetails,
+     discount,
++    discountType,
+     deliveryFee,
+     vat,
+     finalPriceNaira,
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/lib/resolve-discounts.ts copy/src/lib/resolve-discounts.ts
+--- a/src/lib/resolve-discounts.ts	1970-01-01 01:00:00.000000000 +0100
++++ b/src/lib/resolve-discounts.ts	2026-08-02 03:49:29.953803414 +0100
+@@ -0,0 +1,94 @@
++/**
++ * resolveDiscounts — single source of truth for order discounts.
++ *
++ * Both POST /api/services/quote and POST /api/orders call this so a quote and
++ * the resulting order can never disagree on the discount.
++ *
++ * Rules (spec §4.2):
++ *  - First-time discount applies iff the customer claims to be new AND the
++ *    phone has no prior *paid* order (paymentConfirmedAt set), using the
++ *    per-brand setting `first_time_discount_naira`.
++ *  - Referral discount applies iff the code is active, matches the brand and
++ *    has capacity (usesCount < maxUses), using Referral.rewardAmount.
++ *  - The two never stack — the larger wins.
++ */
++import { Brand } from '@prisma/client';
++import { db } from '@/lib/db';
++import { phoneVariants } from '@/lib/phone';
++
++export type DiscountType = 'REFERRAL' | 'FIRST_TIME' | 'NONE';
++
++export interface DiscountResolution {
++  referralDiscountNaira: number;
++  firstTimeDiscountNaira: number;
++  discountType: DiscountType;
++  referralId: string | null;
++  /** True when the referral code actually produced a discount (drives usesCount). */
++  referralApplied: boolean;
++}
++
++/** Read a per-brand setting with a fallback. */
++export async function getSetting(brand: Brand, key: string, fallback = ''): Promise<string> {
++  try {
++    const row = await db.setting.findFirst({ where: { brand, key } });
++    return row?.value ?? fallback;
++  } catch {
++    return fallback;
++  }
++}
++
++export async function resolveDiscounts(params: {
++  brand: Brand;
++  phone?: string | null;
++  referralCode?: string | null;
++  isFirstTimeCustomer?: boolean;
++}): Promise<DiscountResolution> {
++  // ── First-time discount ────────────────────────────────────────────────
++  let firstTimeDiscountNaira = 0;
++  if (params.isFirstTimeCustomer && params.phone) {
++    const settingVal = await getSetting(params.brand, 'first_time_discount_naira', '0');
++    firstTimeDiscountNaira = Number.parseInt(settingVal, 10) || 0;
++    if (firstTimeDiscountNaira > 0) {
++      // Only for customers with no prior paid order (phone variant-matched).
++      const variants = phoneVariants(params.phone);
++      const priorPaid = await db.order.findFirst({
++        where: { customerPhone: { in: variants }, paymentConfirmedAt: { not: null } },
++        select: { id: true },
++      });
++      if (priorPaid) firstTimeDiscountNaira = 0;
++    }
++  }
++
++  // ── Referral discount ──────────────────────────────────────────────────
++  let referralDiscountNaira = 0;
++  let referralId: string | null = null;
++  if (params.referralCode) {
++    const referral = await db.referral.findFirst({
++      where: { code: params.referralCode, brand: params.brand, isActive: true },
++      select: { id: true, rewardAmount: true, maxUses: true, usesCount: true },
++    });
++    if (referral && (referral.maxUses === null || referral.usesCount < referral.maxUses)) {
++      referralDiscountNaira = referral.rewardAmount;
++      referralId = referral.id;
++    }
++  }
++
++  // ── Never stack — the larger wins ──────────────────────────────────────
++  let discountType: DiscountType = 'NONE';
++  if (referralDiscountNaira > 0 && referralDiscountNaira >= firstTimeDiscountNaira) {
++    discountType = 'REFERRAL';
++    firstTimeDiscountNaira = 0;
++  } else if (firstTimeDiscountNaira > 0) {
++    discountType = 'FIRST_TIME';
++    referralDiscountNaira = 0;
++    referralId = null;
++  }
++
++  return {
++    referralDiscountNaira,
++    firstTimeDiscountNaira,
++    discountType,
++    referralId,
++    referralApplied: discountType === 'REFERRAL' && !!referralId,
++  };
++}
+diff -ruN '--exclude=node_modules' '--exclude=.next' '--exclude=.env' '--exclude=.env.example' '--exclude=.git' '--exclude=patches' '--exclude=tsconfig.tsbuildinfo' '--exclude=dev.db' orig/src/lib/rule-lookup.ts copy/src/lib/rule-lookup.ts
+--- a/src/lib/rule-lookup.ts	1970-01-01 01:00:00.000000000 +0100
++++ b/src/lib/rule-lookup.ts	2026-08-02 05:07:36.385732452 +0100
+@@ -0,0 +1,98 @@
++/**
++ * Rule lookup — resolve a bespoke job description to the closest catalog
++ * service (Tier 2 → Tier 1 promotion). Spec §5.1.
++ *
++ * This is a small, explicit rule table (NOT fuzzy matching): the AI maps by
++ * intent, and here we decide the fallback price rule for jobs that don't
++ * match a specific catalog line — e.g. "cut my jeans" → fabric_custom
++ * (₦10k/section, min ₦20k), "engrave wood" → engraving_wood.
++ */
++import { Brand } from '@prisma/client';
++import { db } from '@/lib/db';
++
++export interface CustomSpec {
++  description?: string;
++  material?: string;
++  dimensions?: string;
++  complexity?: string;
++}
++
++/** Service type suffix per rule key; SKYAL uses bare keys, PABERIN uses `paberin_` prefix. */
++function typeKey(brand: Brand, key: string): string {
++  return brand === Brand.PABERIN ? `paberin_${key}` : key;
++}
++
++interface Rule {
++  key: string;
++  patterns: RegExp[];
++  /** Explicit type override per brand (when the prefixed key doesn't exist). */
++  overrides?: Partial<Record<Brand, string>>;
++}
++
++const RULES: Rule[] = [
++  {
++    key: 'topper_custom',
++    patterns: [/cake ?topper/i, /\btopper\b/i, /name ?plate/i, /wedding ?sign/i],
++  },
++  {
++    key: 'engraving_phone',
++    patterns: [/phone ?back/i, /phone/i],
++  },
++  {
++    key: 'engraving_wood',
++    patterns: [/engrav/i, /wood ?engrav/i, /leather ?engrav/i, /jewelry/i, /necklace/i, /badge/i, /stirrer/i, /personaliz/i],
++  },
++  {
++    key: 'fabric_custom',
++    patterns: [
++      /fabric/i, /garment/i, /buba/i, /wrapper/i, /sleeve/i, /boubou/i, /aso-?ebi/i,
++      /ankara/i, /lace/i, /skirt/i, /gown/i, /blouse/i, /iro\b/i, /gele/i, /vintage/i,
++      /jeans/i, /denim/i, /trouser/i, /shirt/i, /dress/i, /material/i, /cloth/i,
++    ],
++  },
++  {
++    key: 'signage_acrylic',
++    // NOTE: bare /sign/i is deliberately NOT used — "design", "assign" etc.
++    // are not signage. Only explicit signage vocabulary matches.
++    patterns: [/signage/i, /sign ?board/i, /shop ?front/i, /lettering/i, /name ?plate/i],
++  },
++  {
++    key: 'acrylic_sticks',
++    patterns: [/\bsticks?\b/i, /\bstraws?\b/i, /stirrers?/i],
++  },
++  {
++    key: 'printed_tag',
++    patterns: [/\btag\b/i, /\blabel\b/i, /printed ?card/i, /\bcard\b/i, /invite/i],
++  },
++  {
++    key: 'sheet_cutting',
++    // NOTE: the bare verb "cut" is deliberately NOT a pattern — "cut my jeans"
++    // is fabric work, "re-cut a chandelier" is unknown. Sheet cutting is
++    // matched by MATERIAL/OBJECT keywords, not by the verb.
++    patterns: [/sheet/i, /\bacrylic\b/i, /\bwood\b/i, /4ft|8ft|4×4|8×4/i, /sign ?board/i, /name ?plate/i],
++    overrides: { [Brand.PABERIN]: 'paberin_sheet_cutting', [Brand.SKYAL]: 'sheet_cutting_inhouse' },
++  },
++];
++
++/**
++ * Resolve a custom job to the closest rule-based catalog service for a brand.
++ * Returns null when nothing sensible fits (→ provisional QUOTING order).
++ */
++export async function resolveCustomToService(
++  brand: Brand,
++  spec: CustomSpec
++): Promise<{ serviceType: string | null; reason: string }> {
++  const haystack = `${spec.description || ''} ${spec.material || ''}`.trim();
++  if (!haystack) return { serviceType: null, reason: 'no description' };
++
++  for (const rule of RULES) {
++    if (!rule.patterns.some((p) => p.test(haystack))) continue;
++    const type = rule.overrides?.[brand] || typeKey(brand, rule.key);
++    const exists = await db.service.findFirst({
++      where: { brand, type, isActive: true },
++      select: { id: true },
++    });
++    if (exists) return { serviceType: type, reason: `rule: ${rule.key}` };
++  }
++  return { serviceType: null, reason: 'no rule matched' };
++}

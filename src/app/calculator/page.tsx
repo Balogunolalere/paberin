@@ -303,6 +303,14 @@ export default function CalculatorPage() {
                   {quoteError}
                 </div>
               )}
+
+              <p className="text-xs text-[#666666] mt-4">
+                Can&apos;t find your job?{' '}
+                <Link href="/order?custom=1" className="text-[#FF5C00] hover:underline font-medium">
+                  Request a custom quote
+                </Link>{' '}
+                — cut my jeans, engrave wood, anything bespoke.
+              </p>
             </form>
           </ScrollReveal>
         </div>

@@ -89,3 +89,6 @@ package-lock.json
 scripts/data/
 tests/datasets/checkpoints/
 tests/datasets/eval_report_*.json
+
+# Scratch working copy of the admin backend (see docs/order-and-pricing-redesign-spec.md)
+/admin-dev/

@@ -602,13 +602,13 @@ def build_pass2_prompt() -> str:
     live = load_live_system_prompt()
     return f"""You are generating the IDEAL response that Paberin's AI assistant should produce for a given customer inquiry.
 
-The assistant operates under EXACTLY this system prompt (its full knowledge of services, prices, rules, tone, and [QUOTE] format):
+The assistant operates under EXACTLY this system prompt (its full knowledge of services, tone, and the [SPECS] extraction contract — the AI NEVER prices; the system computes exact prices via the pricing engine):
 
 <assistant-system-prompt>
 {live}
 </assistant-system-prompt>
 
-Your job: given a real customer inquiry from Paberin's WhatsApp history, write the response the IDEAL assistant would give in that situation — following the assistant's system prompt rules precisely (correct catalog prices, lead times, express rules, delivery fees, Nigerian-friendly tone with "ma"/"sir", clarifying questions when details are missing, [QUOTE] block when a quote can be built).
+Your job: given a real customer inquiry from Paberin's WhatsApp history, write the response the IDEAL assistant would give in that situation — following the assistant's system prompt rules precisely (extract the structured [SPECS] block when the request is complete, ask clarifying questions when details are missing, NEVER invent prices in the response text, Nigerian-friendly tone with "ma"/"sir").
 
 Return ONLY valid JSON: {{"ideal_response": "your full response text here"}}"""
 

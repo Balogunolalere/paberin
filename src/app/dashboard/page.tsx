@@ -15,6 +15,7 @@ import {
   orderStateClass,
   type Order,
   type Escalation,
+  type SavedQuote,
 } from '@/lib/api';
 
 /**
@@ -224,11 +225,60 @@ function DashboardContent() {
     [customer?.phone, customer?.email, customer?.name, emailNotifications, emailPrefSaving, prefEmail, editEmail]
   );
 
+  /* ── Saved quotes (same price when they come back) ── */
+  const [openQuotes, setOpenQuotes] = useState<SavedQuote[]>([]);
+  const [quotesError, setQuotesError] = useState<string | null>(null);
+
+  const loadQuotes = useCallback(async () => {
+    if (!customer?.phone) return;
+    try {
+      const quotes = await api.getOpenQuotes(customer.phone);
+      setOpenQuotes(Array.isArray(quotes) ? quotes : []);
+      setQuotesError(null);
+    } catch {
+      setOpenQuotes([]);
+    }
+  }, [customer?.phone]);
+
+  /** Initialize Paystack for an order and redirect (also used for quote acceptance). */
+  const payOrder = useCallback(async (order: Order) => {
+    const email =
+      (order as any).customerEmail || customer?.email || `${String(customer?.phone || 'customer').replace(/\D/g, '')}@paberin.ng`;
+    const pay = await api.initializePayment({
+      amount: order.totalAmount,
+      email,
+      orderNumber: order.orderNumber,
+      brand: 'PABERIN',
+      metadata: { orderNumber: order.orderNumber, brand: 'PABERIN' },
+      callbackUrl: `${process.env.NEXT_PUBLIC_APP_URL || 'https://paberin.vercel.app'}/order/complete?order=${order.orderNumber}`,
+    });
+    const authUrl = (pay as any)?.authorizationUrl || (pay as any)?.authorization_url;
+    if (authUrl) {
+      window.location.href = authUrl;
+      return;
+    }
+    throw new Error('Payment could not be started — no checkout link returned.');
+  }, [customer?.email, customer?.phone]);
+
+  /** Accept a saved quote (creates the order from the snapshot) and pay. */
+  const acceptAndPay = async (q: SavedQuote) => {
+    if (!customer?.phone) return;
+    setQuotesError(null);
+    try {
+      const order = await api.acceptQuote(q.id, customer.phone);
+      await payOrder(order);
+    } catch (err: any) {
+      setQuotesError(err?.message || 'Could not accept the quote. Please try again.');
+      loadQuotes();
+    }
+  };
+
   useEffect(() => {
     loadOrders();
     loadEscalations();
     loadEmailPreferences();
-  }, [loadOrders, loadEscalations, loadEmailPreferences]);
+    loadQuotes();
+  }, [loadOrders, loadEscalations, loadEmailPreferences, loadQuotes]);
 
   /* ── Escalation badge set: orderNumbers with an OPEN/RESPONDED ticket ── */
   const escalatedOrderNumbers = useMemo(() => {
@@ -760,6 +810,43 @@ function DashboardContent() {
         </div>
       </ScrollReveal>
 
+      {/* Saved quotes — same price as quoted, review & pay */}
+      {openQuotes.length > 0 && (
+        <ScrollReveal>
+          <div className="mb-10">
+            <h2 className="text-xl sm:text-2xl font-bold text-black mb-6">Your Saved Quotes</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {openQuotes.map((q) => (
+                <div key={q.id} className="card border-[#FF5C00]/30 bg-[#FFF7F0]">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">
+                        {q.quoteNumber}
+                      </p>
+                      <p className="text-2xl font-bold text-black">{formatNaira(q.totalAmount)}</p>
+                      <p className="text-xs text-[#666666] mt-1">
+                        {q.expiresAt
+                          ? `Valid until ${formatDate(q.expiresAt)}`
+                          : 'Price locked for you'}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => acceptAndPay(q)}
+                      className="btn-primary !px-4 !py-2 text-xs"
+                    >
+                      Accept &amp; Pay
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {quotesError && (
+              <p className="text-xs text-[#E05200] mt-3">{quotesError}</p>
+            )}
+          </div>
+        </ScrollReveal>
+      )}
+
       {/* Orders */}
       <div>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -1097,6 +1184,15 @@ function DashboardContent() {
                     )}
                   </div>
 
+                  {detailData?.state === 'QUOTING' && (
+                    <div className="mt-6 bg-[#FFF7F0] border border-[#FFD9BF] rounded-lg p-4">
+                      <p className="text-sm text-[#E05200] leading-relaxed">
+                        Awaiting pricing — we&apos;re confirming the exact price for your custom
+                        job. You&apos;ll be able to pay right here once it&apos;s ready.
+                      </p>
+                    </div>
+                  )}
+
                   {/* Status Timeline (always rendered; empty-state aware) */}
                   <div className="mt-6">
                     <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-4">
@@ -1332,6 +1428,21 @@ function DashboardContent() {
                   ) : (
                     <div className="mt-6 space-y-3">
                       <div className="flex flex-wrap gap-2">
+                        {(detailData?.state || detailOrder.state) === 'PAYMENT_PENDING' && (
+                          <button
+                            onClick={async () => {
+                              setDetailError(null);
+                              try {
+                                await payOrder(detailData || detailOrder);
+                              } catch (err: any) {
+                                setDetailError(err?.message || 'Payment could not be initialized.');
+                              }
+                            }}
+                            className="btn-primary"
+                          >
+                            Pay {formatNaira(detailData?.totalAmount ?? detailOrder.totalAmount)}
+                          </button>
+                        )}
                         <button
                           onClick={() => handleReorder(detailOrder)}
                           className="btn-primary"

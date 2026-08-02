@@ -7,14 +7,14 @@
  *   Paberin frontend → POST /api/chat → Agnes 2.0 Flash → structured response
  *
  * KEY FEATURES:
- *   - Rich system prompt with complete Paberin service catalog & pricing
- *   - [QUOTE] block extraction with lenient JSON parsing (code fences,
- *     trailing commas) plus a numeric cross-check that recomputes the total
- *     from its components when the model's arithmetic is inconsistent
- *   - Naira-context-only regex fallback — phone numbers and dates are never
- *     misread as prices
+ *   - Rich system prompt with the complete service catalog (NO prices — the
+ *     model never prices; the admin pricing engine does)
+ *   - [SPECS] block extraction with lenient JSON parsing (code fences,
+ *     trailing commas)
+ *   - Engine pricing: specs → admin /api/services/quote → exact price shown
+ *   - Custom jobs (no catalog match) hand off to the provisional-order flow
+ *   - Saved quote snapshots surfaced to returning customers
  *   - Session persistence (session ID generated, returned to client)
- *   - Quote breakdown passed to order form via structured response
  *   - Error classification (timeout vs auth vs rate-limit vs model)
  *   - Multi-turn conversation context tracking (sanitized client history)
  *   - Nigerian-friendly tone calibration
@@ -36,11 +36,12 @@ import {
   retryWithBackoff,
   parseEnvInt,
   generateSessionId,
-  extractQuote,
+  parseSpecsBlock,
   cleanAssistantText,
   sanitizeHistory,
   isInjectionAttempt,
   PABERIN_SYSTEM_PROMPT,
+  type ChatSpecs,
 } from '@/lib/chat';
 
 // Agnes API configuration
@@ -154,6 +155,96 @@ async function saveSessionToAdmin(params: {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
+// ENGINE PRICING (spec: the AI never prices)
+// ═══════════════════════════════════════════════════════════════════════
+
+interface EngineQuoteResult {
+  quote: ChatResponse['quote'];
+  availability: unknown;
+}
+
+/**
+ * Ask the admin pricing engine for the exact price of an extracted spec.
+ * Same endpoint the order form uses — one number everywhere.
+ */
+async function callAdminQuote(specs: ChatSpecs, customerPhone?: string): Promise<EngineQuoteResult> {
+  const payload = {
+    brand: 'PABERIN',
+    serviceType: specs.service_type,
+    quantity: specs.quantity,
+    sla: specs.sla || 'Standard',
+    deliveryMethod: specs.delivery,
+    deliveryAddress: specs.delivery === 'LOCAL_DELIVERY' ? specs.delivery_address : undefined,
+    ...(customerPhone ? { customerPhone } : {}),
+  };
+  const res = await retryWithBackoff(
+    async (remaining) => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(
+        () => controller.abort(),
+        Math.max(500, Math.min(15000, remaining))
+      );
+      try {
+        return await fetch(`${ADMIN_API_URL}/api/services/quote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+          cache: 'no-store',
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    },
+    { maxRetries: 2, baseDelay: 500, budgetMs: 20000, shouldRetry: isRetryableError }
+  );
+
+  if (!res.ok) {
+    throw new Error(`Pricing engine error (${res.status})`);
+  }
+  const json = await res.json().catch(() => null);
+  const data = json?.data;
+  if (!data || typeof data.quoteNaira !== 'number') {
+    throw new Error('Pricing engine returned no quote');
+  }
+  const breakdown = data.breakdown || {};
+  const quote: ChatResponse['quote'] = {
+    price: data.quoteNaira,
+    breakdown,
+    summary: `${breakdown.serviceLabel || specs.service_type}: ${data.quoteNaira.toLocaleString('en-NG')} naira${breakdown.leadTime ? ` · ${breakdown.leadTime}` : ''}`,
+  };
+  return { quote, availability: data.availability ?? null };
+}
+
+/** Human-readable one-liner appended to the assistant text. */
+function priceLine(quote: NonNullable<ChatResponse['quote']>): string {
+  const b = quote.breakdown || {};
+  const parts: string[] = [`₦${quote.price.toLocaleString('en-NG')}`];
+  if (b.quantity && b.serviceLabel) parts.unshift(`${b.quantity} × ${b.serviceLabel}`);
+  if (b.deliveryFee) parts.push(`delivery ₦${(b.deliveryFee as number).toLocaleString('en-NG')}`);
+  if (b.discount) parts.push(`discount −₦${(b.discount as number).toLocaleString('en-NG')}`);
+  if (b.leadTime) parts.push(b.leadTime as string);
+  return `\n\n💰 Your price: ${parts.join(' · ')}. Review and pay to confirm your order.`;
+}
+
+/** Best-effort: open saved quote snapshots for the phone (first turn only). */
+async function fetchOpenQuotes(customerPhone: string): Promise<ChatResponse['openQuotes']> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`${ADMIN_API_URL}/api/quotes?phone=${encodeURIComponent(customerPhone)}`, {
+      signal: controller.signal,
+      cache: 'no-store',
+    }).finally(() => clearTimeout(timeoutId));
+    if (!res.ok) return undefined;
+    const json = await res.json().catch(() => null);
+    return Array.isArray(json?.data) ? json.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
 // MAIN HANDLER
 // ═══════════════════════════════════════════════════════════════════════
 
@@ -263,12 +354,35 @@ export async function POST(request: NextRequest) {
     const cacheKey = agnesMessages.map((m) => `${m.role}:${m.content}`).join('|');
     const cachedRaw = chatCacheGet(cacheKey);
     if (cachedRaw !== null) {
-      const quote = extractQuote(cachedRaw);
+      const specs = parseSpecsBlock(cachedRaw);
       const assistantText = cleanAssistantText(cachedRaw);
+      let quote: ChatResponse['quote'] | undefined;
+      let custom: ChatResponse['custom'] | undefined;
+      if (specs?.service_type) {
+        try {
+          const engine = await callAdminQuote(specs, typeof rawCustomerPhone === 'string' ? rawCustomerPhone : undefined);
+          quote = engine.quote;
+        } catch {
+          // cached fallback without a price — the UI still shows the message
+        }
+      } else if (specs?.custom_description) {
+        custom = {
+          description: specs.custom_description,
+          material: specs.material,
+          quantity: specs.quantity,
+          sla: specs.sla,
+        };
+      }
+      let openQuotes: ChatResponse['openQuotes'];
+      if (typeof rawCustomerPhone === 'string' && rawCustomerPhone.trim() && sanitizedHistory.length === 0) {
+        openQuotes = await fetchOpenQuotes(rawCustomerPhone.trim());
+      }
       return NextResponse.json({
         assistant_text: assistantText,
         latency_ms: 0,
         quote,
+        custom,
+        openQuotes,
         render_order_now: quote !== undefined,
         sessionId,
         error: undefined,
@@ -302,7 +416,7 @@ export async function POST(request: NextRequest) {
             model: 'agnes-2.0-flash',
             messages: agnesMessages,
             temperature: 0.5, // Balanced: creative enough for natural chat, deterministic enough for quotes
-            max_tokens: 4096, // Room for long answers + the [QUOTE] block without mid-quote truncation
+            max_tokens: 4096, // Room for long answers + the [SPECS] block without mid-block truncation
           }),
           signal: controller.signal,
         });
@@ -359,17 +473,47 @@ export async function POST(request: NextRequest) {
       chatCacheSet(cacheKey, rawAssistantText);
     }
 
-    // ── Extract quote (structured [QUOTE] block first, regex fallback) ──
-    const quote = extractQuote(rawAssistantText);
+    // ── Parse specs (structured [SPECS] block) ──
+    const specs = parseSpecsBlock(rawAssistantText);
+    const baseText = cleanAssistantText(rawAssistantText);
 
-    // ── Clean display text (remove [QUOTE] blocks) ──
-    const assistantText = cleanAssistantText(rawAssistantText);
+    let assistantText = baseText;
+    let quote: ChatResponse['quote'] | undefined;
+    let custom: ChatResponse['custom'] | undefined;
+
+    if (specs?.service_type) {
+      // Tier 1 — catalog job: the ENGINE sets the price, never the model.
+      try {
+        const engine = await callAdminQuote(specs, typeof rawCustomerPhone === 'string' ? rawCustomerPhone : undefined);
+        quote = engine.quote;
+        assistantText = `${baseText}${priceLine(engine.quote!)}`;
+      } catch (err: any) {
+        console.warn('[Paberin Chat] Engine quote failed:', err?.message);
+        assistantText = `${baseText}\n\nI couldn't confirm the exact price just now — please try again, or place your order and we'll confirm pricing.`;
+      }
+    } else if (specs?.custom_description) {
+      // Tier 2 — custom job: hand off to the provisional-order flow.
+      custom = {
+        description: specs.custom_description,
+        material: specs.material,
+        quantity: specs.quantity,
+        sla: specs.sla,
+      };
+      assistantText = `${baseText}\n\nI've noted your custom job. Tap "Place custom order" to send it to our team — we'll confirm the price right away.`;
+    }
+
+    let openQuotes: ChatResponse['openQuotes'];
+    if (typeof rawCustomerPhone === 'string' && rawCustomerPhone.trim() && sanitizedHistory.length === 0) {
+      openQuotes = await fetchOpenQuotes(rawCustomerPhone.trim());
+    }
 
     // ── Build response ──
     const response: ChatResponse = {
       assistant_text: assistantText,
       latency_ms: fetchLatency,
       quote,
+      custom,
+      openQuotes,
       render_order_now: quote !== undefined,
       sessionId,
       error: undefined,

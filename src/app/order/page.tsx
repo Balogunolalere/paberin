@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ScrollReveal } from '@/components/ScrollReveal';
+import { AvailabilityLine } from '@/components/AvailabilityLine';
 import { usePaberinAuth } from '@/lib/auth';
 import {
   api,
@@ -14,7 +15,8 @@ import {
   type Order,
   type ChatResponse,
 } from '@/lib/api';
-import { matchChatQuoteToService, buildChatOrderNotes } from '@/lib/chat-order';
+import { buildChatOrderNotes } from '@/lib/chat-order';
+import type { ChatSpecs } from '@/lib/chat';
 
 /**
  * Paberin order form — 5-step wizard.
@@ -87,6 +89,13 @@ function OrderPageInner() {
   const [uploadFiles, setUploadFiles] = useState<{ name: string; data: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Custom job mode ("Something else" / chat handoff with no catalog match):
+  // describe the job, we price it via rules or confirm pricing quickly.
+  const [customMode, setCustomMode] = useState(false);
+  const [customDescription, setCustomDescription] = useState('');
+  const [customMaterial, setCustomMaterial] = useState('');
+  const [customDimensions, setCustomDimensions] = useState('');
+
   // Prefill from auth profile
   useEffect(() => {
     if (customer) {
@@ -122,50 +131,53 @@ function OrderPageInner() {
     setStep(2);
   }, [searchParams, servicesLoading, services]);
 
-  // Chat quote prefill: when coming from /chat with ?from=chat&quote={...}
-  // pre-fill as much as possible from the AI quote — map the AI's service
-  // onto the catalog (even when there is no exact template), prefill
-  // quantity/SLA/delivery/notes, and land on step 2 so the customer only
-  // reviews, doesn't re-enter everything.
+  // Chat specs prefill + custom-mode entry: when coming from /chat with
+  // ?from=chat&specs={...}, pre-fill the catalog service EXACTLY (no fuzzy
+  // mapping — the AI's service_type is authoritative) or open custom mode
+  // when the job has no catalog match. ?custom=1 opens custom mode directly.
   const chatPrefillApplied = useRef(false);
-  const [chatMapping, setChatMapping] = useState<{ fromLabel: string; toLabel: string; mapped: boolean } | null>(null);
   useEffect(() => {
     if (chatPrefillApplied.current) return;
     if (servicesLoading || services.length === 0) return;
     const from = searchParams.get('from');
-    const quoteRaw = searchParams.get('quote');
-    if (from !== 'chat' || !quoteRaw) return;
-    try {
-      const q = JSON.parse(decodeURIComponent(quoteRaw)) as ChatResponse['quote'];
-      const breakdown = q?.breakdown;
-      const { service, mapped } = matchChatQuoteToService(q, services);
-      const sla: 'Standard' | 'Express' = breakdown?.sla === 'Express' ? 'Express' : 'Standard';
-      const notes = buildChatOrderNotes(q, searchParams.get('context'));
-
+    const specsRaw = searchParams.get('specs');
+    if (searchParams.get('custom') === '1') {
       chatPrefillApplied.current = true;
-      setForm((prev) => ({
-        ...prev,
-        serviceType: service?.type || prev.serviceType,
-        serviceName: service?.label || breakdown?.serviceLabel || prev.serviceName,
-        quantity: breakdown?.quantity && breakdown.quantity > 0 ? breakdown.quantity : 1,
-        sla,
-        deliveryMethod: (breakdown?.deliveryFee || 0) > 0 ? 'LOCAL_DELIVERY' : 'PICKUP',
-        customerNotes: notes || prev.customerNotes,
-      }));
-      // Tell the customer when the AI's item was mapped to a different
-      // catalog service (e.g. "Full Buba" → "Fabric Laser Cutting")
-      if (service) {
-        const labelDiffers =
-          !!breakdown?.serviceLabel &&
-          breakdown.serviceLabel.trim().toLowerCase() !== service.label.trim().toLowerCase();
-        if (mapped || labelDiffers) {
-          setChatMapping({ fromLabel: breakdown?.serviceLabel || 'your request', toLabel: service.label, mapped });
-        }
+      setCustomMode(true);
+      setStep(2);
+      return;
+    }
+    if (from !== 'chat' || !specsRaw) return;
+    try {
+      const specs = JSON.parse(specsRaw) as ChatSpecs;
+      chatPrefillApplied.current = true;
+      if (specs.service_type) {
+        const match = services.find((s) => s.type === specs.service_type);
+        setForm((prev) => ({
+          ...prev,
+          serviceType: match?.type || prev.serviceType,
+          serviceName: match?.label || prev.serviceName,
+          quantity: specs.quantity > 0 ? specs.quantity : 1,
+          sla: specs.sla === 'Express' ? 'Express' : 'Standard',
+          deliveryMethod: specs.delivery === 'LOCAL_DELIVERY' ? 'LOCAL_DELIVERY' : 'PICKUP',
+          deliveryAddress: specs.delivery_address || prev.deliveryAddress,
+          customerNotes: buildChatOrderNotes(specs, searchParams.get('context')) || prev.customerNotes,
+        }));
+      } else {
+        setCustomMode(true);
+        setCustomDescription(specs.custom_description || '');
+        setCustomMaterial(specs.material || '');
+        setCustomDimensions('');
+        setForm((prev) => ({
+          ...prev,
+          quantity: specs.quantity > 0 ? specs.quantity : 1,
+          customerNotes: buildChatOrderNotes(specs, searchParams.get('context')) || prev.customerNotes,
+        }));
       }
       // Always jump to step 2 so they can review and adjust
       setStep(2);
     } catch {
-      // Quote parse failed — let user fill manually
+      // Specs parse failed — let user fill manually
     }
   }, [searchParams, servicesLoading, services]);
 
@@ -251,9 +263,11 @@ function OrderPageInner() {
   const selectService = (s: Service) => {
     update('serviceType', s.type);
     update('serviceName', s.label);
-    setChatMapping(null); // manual choice overrides the AI mapping notice
+    setCustomMode(false);
     setStep(2);
   };
+
+  const selectedService = services.find((s) => s.type === form.serviceType) || null;
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []);
@@ -275,8 +289,13 @@ function OrderPageInner() {
   };
 
   const canProceed = (): boolean => {
-    if (step === 1) return !!form.serviceType;
-    if (step === 2) return form.quantity > 0 && (uploadFiles.length > 0 || !!form.customerNotes);
+    if (step === 1) return customMode || !!form.serviceType;
+    if (step === 2) {
+      if (customMode) {
+        return !!customDescription.trim() && form.quantity > 0;
+      }
+      return form.quantity > 0 && (uploadFiles.length > 0 || !!form.customerNotes);
+    }
     if (step === 3) {
       if (form.deliveryMethod === 'LOCAL_DELIVERY') return !!form.deliveryAddress.trim();
       return true;
@@ -354,22 +373,46 @@ function OrderPageInner() {
         designFileUrl = JSON.stringify(uploadedFiles.map(f => ({ url: f.url, publicId: f.publicId, name: f.name })));
       }
 
-      const order = await api.createOrder({
-        serviceType: form.serviceType,
-        quantity: form.quantity,
-        sla: form.sla,
-        customerName: form.customerName,
-        customerPhone: form.customerPhone,
-        customerEmail: form.customerEmail,
-        deliveryMethod: form.deliveryMethod,
-        deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
-        designFileUrl,
-        customerNotes: [form.customerNotes, uploadFiles.length > 0 ? `--- Design files: ${uploadFiles.map(f => f.name).join(', ')} ---` : ''].filter(Boolean).join('\n\n'),
-        referralCode: form.referralCode || undefined,
-        isFirstTimeCustomer: customer?.isNew || false,
-      });
+      const order = await api.createOrder(customMode
+        ? {
+            customSpec: {
+              description: customDescription.trim(),
+              material: customMaterial.trim() || undefined,
+              dimensions: customDimensions.trim() || undefined,
+              complexity: 'simple',
+            },
+            quantity: form.quantity,
+            sla: form.sla,
+            customerName: form.customerName,
+            customerPhone: form.customerPhone,
+            customerEmail: form.customerEmail,
+            deliveryMethod: form.deliveryMethod,
+            deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
+            designFileUrl,
+            customerNotes: [form.customerNotes, uploadFiles.length > 0 ? `--- Design files: ${uploadFiles.map(f => f.name).join(', ')} ---` : ''].filter(Boolean).join('\n\n'),
+            referralCode: form.referralCode || undefined,
+            isFirstTimeCustomer: customer?.isNew || false,
+          }
+        : {
+            serviceType: form.serviceType,
+            quantity: form.quantity,
+            sla: form.sla,
+            customerName: form.customerName,
+            customerPhone: form.customerPhone,
+            customerEmail: form.customerEmail,
+            deliveryMethod: form.deliveryMethod,
+            deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
+            designFileUrl,
+            customerNotes: [form.customerNotes, uploadFiles.length > 0 ? `--- Design files: ${uploadFiles.map(f => f.name).join(', ')} ---` : ''].filter(Boolean).join('\n\n'),
+            referralCode: form.referralCode || undefined,
+            isFirstTimeCustomer: customer?.isNew || false,
+          });
       setCreatedOrder(order);
-      await startPayment(order);
+      // Provisional QUOTING orders (unpriced custom jobs) skip payment until
+      // the team confirms the price — the customer pays from the dashboard.
+      if (order.state !== 'QUOTING') {
+        await startPayment(order);
+      }
     } catch (err: any) {
       setError(err?.message || 'Could not submit order. Please try again.');
     } finally {
@@ -422,9 +465,19 @@ function OrderPageInner() {
           </ScrollReveal>
           <ScrollReveal delay={0.2}>
             <p className="text-base text-[#666666] mt-6 leading-relaxed">
-              Your order <span className="font-mono text-black">{createdOrder.orderNumber}</span> is
-              queued. We&apos;ll review your design and confirm by email within 4 hours.
-              Track progress any time.
+              {createdOrder.state === 'QUOTING' ? (
+                <>
+                  Your order <span className="font-mono text-black">{createdOrder.orderNumber}</span>{' '}
+                  is in — we&apos;re confirming the exact price now. You&apos;ll get a notification,
+                  then just review and pay.
+                </>
+              ) : (
+                <>
+                  Your order <span className="font-mono text-black">{createdOrder.orderNumber}</span> is
+                  queued. We&apos;ll review your design and confirm by email within 4 hours.
+                  Track progress any time.
+                </>
+              )}
             </p>
           </ScrollReveal>
           <ScrollReveal delay={0.3}>
@@ -580,40 +633,76 @@ function OrderPageInner() {
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {services.map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => selectService(s)}
-                      className={`card text-left hover-lift transition-all ${
-                        form.serviceType === s.type
-                          ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]'
-                          : ''
-                      }`}
-                    >
-                      <div className="flex items-start justify-between mb-2">
-                        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
-                          {s.category}
-                        </p>
-                        <p className="font-mono text-xs text-[#FF5C00] font-bold">
-                          {formatNaira(s.basePriceNaira)}
-                          <span className="text-[#888888] font-normal">/{s.unit}</span>
-                        </p>
-                      </div>
-                      <p className="text-base font-bold text-black mb-1">{s.label}</p>
-                      <p className="text-xs text-[#666666] line-clamp-2 leading-relaxed">
-                        {s.description}
+                  {customMode ? (
+                    <div className="card col-span-full bg-[#FFF7F0] border-[#FFD9BF]">
+                      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#E05200] mb-2">
+                        Custom job mode
                       </p>
-                      <div className="mt-3 pt-3 border-t border-[#EAEAEA] flex items-center justify-between text-xs">
-                        <span className="text-[#888888]">
-                          Lead: {s.standardLeadTime}
-                        </span>
-                        {s.allowExpress && (
-                          <span className="text-[#FF5C00]">Express available</span>
-                        )}
-                      </div>
-                    </button>
-                  ))}
+                      <p className="text-sm text-[#666666] mb-4 leading-relaxed">
+                        You&apos;re ordering a bespoke job (from chat or the &ldquo;Something else&rdquo; option).
+                        Describe it on the next step — we&apos;ll confirm the exact price quickly.
+                      </p>
+                      <button
+                        onClick={() => { setCustomMode(false); setStep(1); }}
+                        className="text-xs text-[#FF5C00] hover:underline"
+                      >
+                        ← Browse catalog services instead
+                      </button>
+                    </div>
+                  ) : (
+                    services.map((s) => (
+                      <button
+                        key={s.id}
+                        onClick={() => selectService(s)}
+                        className={`card text-left hover-lift transition-all ${
+                          form.serviceType === s.type
+                            ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]'
+                            : ''
+                        }`}
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
+                            {s.category}
+                          </p>
+                          <p className="font-mono text-xs text-[#FF5C00] font-bold">
+                            {formatNaira(s.basePriceNaira)}
+                            <span className="text-[#888888] font-normal">/{s.unit}</span>
+                          </p>
+                        </div>
+                        <p className="text-base font-bold text-black mb-1">{s.label}</p>
+                        <p className="text-xs text-[#666666] line-clamp-2 leading-relaxed">
+                          {s.description}
+                        </p>
+                        <div className="mt-3 pt-3 border-t border-[#EAEAEA] flex items-center justify-between text-xs">
+                          <span className="text-[#888888]">
+                            Lead: {s.standardLeadTime}
+                          </span>
+                          {s.allowExpress && (
+                            <span className="text-[#FF5C00]">Express available</span>
+                          )}
+                        </div>
+                      </button>
+                    ))
+                  )}
                 </div>
+
+                {!customMode && (
+                  <button
+                    onClick={() => { setCustomMode(true); setStep(2); }}
+                    className="card w-full text-left hover-lift transition-all border-dashed mt-3"
+                  >
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <p className="text-base font-bold text-black mb-1">Something else / custom job</p>
+                        <p className="text-xs text-[#666666] leading-relaxed">
+                          Cutting jeans, engraving wood, a bespoke piece? Describe it and we&apos;ll
+                          confirm the exact price fast.
+                        </p>
+                      </div>
+                      <span className="text-[#FF5C00] text-xl">→</span>
+                    </div>
+                  </button>
+                )}
               </div>
             </ScrollReveal>
           )}
@@ -630,29 +719,65 @@ function OrderPageInner() {
                 </p>
 
                 <div className="space-y-6">
-                  {/* Service summary */}
-                  <div className="card bg-[#F7F7F7] flex items-center justify-between">
-                    <div>
-                      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">
-                        Selected service
-                      </p>
-                      <p className="text-base font-bold text-black">{form.serviceName}</p>
-                      {chatMapping && (
-                        <p className="text-xs text-[#E05200] mt-1 max-w-md leading-relaxed">
-                          From your chat: “{chatMapping.fromLabel}” — we mapped it to{' '}
-                          <span className="font-semibold">{chatMapping.toLabel}</span>
-                          {chatMapping.mapped ? ' (closest available service)' : ''}. You can
-                          change it below if needed.
-                        </p>
-                      )}
+                  {/* Service summary OR custom-job description fields */}
+                  {customMode ? (
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                          <span className="text-[#FF5C00]">A</span> What do you need?
+                        </label>
+                        <textarea
+                          rows={3}
+                          value={customDescription}
+                          onChange={(e) => setCustomDescription(e.target.value)}
+                          placeholder="e.g. Cut my jeans into a pattern · Engrave a wooden tray · A bespoke acrylic sign…"
+                          className="form-input resize-none"
+                          required
+                        />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                            <span className="text-[#FF5C00]">B</span> Material (optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={customMaterial}
+                            onChange={(e) => setCustomMaterial(e.target.value)}
+                            placeholder="denim, wood, acrylic…"
+                            className="form-input"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                            <span className="text-[#FF5C00]">C</span> Size / notes (optional)
+                          </label>
+                          <input
+                            type="text"
+                            value={customDimensions}
+                            onChange={(e) => setCustomDimensions(e.target.value)}
+                            placeholder="waist 34, length 40…"
+                            className="form-input"
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <button
-                      onClick={() => setStep(1)}
-                      className="text-xs text-[#FF5C00] hover:underline"
-                    >
-                      Change
-                    </button>
-                  </div>
+                  ) : (
+                    <div className="card bg-[#F7F7F7] flex items-center justify-between">
+                      <div>
+                        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">
+                          Selected service
+                        </p>
+                        <p className="text-base font-bold text-black">{form.serviceName}</p>
+                      </div>
+                      <button
+                        onClick={() => setStep(1)}
+                        className="text-xs text-[#FF5C00] hover:underline"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  )}
 
                   {/* Quantity */}
                   <div className="space-y-2">
@@ -705,15 +830,18 @@ function OrderPageInner() {
                       </button>
                       <button
                         onClick={() => update('sla', 'Express')}
+                        disabled={!!selectedService && !selectedService.allowExpress}
                         className={`card text-left transition-all ${
                           form.sla === 'Express'
                             ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]'
                             : ''
-                        }`}
+                        } ${selectedService && !selectedService.allowExpress ? 'opacity-50 cursor-not-allowed' : ''}`}
                       >
                         <p className="text-sm font-bold text-black">Express</p>
                         <p className="text-xs text-[#666666] mt-1">
-                          24–48 hour turnaround. Surcharge applies.
+                          {selectedService && !selectedService.allowExpress
+                            ? 'Not available for this service.'
+                            : '24–48 hour turnaround. Surcharge applies.'}
                         </p>
                       </button>
                     </div>
@@ -932,9 +1060,16 @@ function OrderPageInner() {
                 <div className="space-y-4">
                   <div className="card">
                     <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">
-                      Service
+                      {customMode ? 'Custom job' : 'Service'}
                     </p>
-                    <p className="text-base font-bold text-black">{form.serviceName}</p>
+                    <p className="text-base font-bold text-black">
+                      {customMode ? (customDescription || 'Custom job') : form.serviceName}
+                    </p>
+                    {customMode && (customMaterial || customDimensions) && (
+                      <p className="text-xs text-[#666666] mt-1">
+                        {[customMaterial, customDimensions].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
                     <p className="text-xs text-[#666666] mt-1">
                       Qty {form.quantity} · {form.sla}
                     </p>
@@ -1018,7 +1153,7 @@ function OrderPageInner() {
                 disabled={submitting || quoteLoading}
                 className="btn-primary disabled:opacity-60"
               >
-                {submitting ? 'Submitting…' : quote ? `Pay ${formatNaira(quote.quoteNaira)}` : 'Submit Order'}
+                {submitting ? 'Submitting…' : customMode ? 'Place Custom Order' : quote ? `Pay ${formatNaira(quote.quoteNaira)}` : 'Submit Order'}
               </button>
             )}
           </div>
@@ -1072,6 +1207,11 @@ function OrderPageInner() {
                           <span className="text-[#FF5C00]">−{formatNaira(quote.breakdown.discount as number)}</span>
                         </div>
                       ) : null}
+                    </div>
+                  )}
+                  {(quote as any).availability && (
+                    <div className="pt-3 border-t border-[#EAEAEA]">
+                      <AvailabilityLine availability={(quote as any).availability} />
                     </div>
                   )}
                 </div>

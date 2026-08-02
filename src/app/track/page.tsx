@@ -235,17 +235,6 @@ function TrackInner() {
                       </p>
                     </div>
                   </div>
-
-                  {order.trackingPin && (
-                    <div className="mt-5 pt-5 border-t border-[#EAEAEA]">
-                      <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-1">
-                        Tracking PIN
-                      </p>
-                      <p className="font-mono text-lg text-[#FF5C00] font-bold">
-                        {order.trackingPin}
-                      </p>
-                    </div>
-                  )}
                 </div>
 
                 {/* Timeline */}

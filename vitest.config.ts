@@ -6,6 +6,7 @@ const config = {
     globals: true,
     environment: 'node',
     setupFiles: ['./tests/unit/setup.ts'],
+    exclude: ['node_modules/**', 'admin-dev/**', '.next/**'],
     coverage: {
       provider: 'istanbul',
       reporter: ['text', 'json', 'html'],

@@ -41,11 +41,40 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-/** Mock global fetch: Agnes calls get `agnesHandler`, everything else (admin save) gets 200. */
-function mockFetch(agnesHandler: (init?: RequestInit) => Response | Promise<Response>) {
+/** Mock global fetch: Agnes calls get `agnesHandler`, the admin pricing engine
+ *  (`/api/services/quote`) gets `engineHandler`, everything else (admin save) gets 200. */
+function mockFetch(
+  agnesHandler: (init?: RequestInit) => Response | Promise<Response>,
+  engineHandler?: (init?: RequestInit) => Response | Promise<Response>
+) {
   ;(fetch as any).mockImplementation((url: string, init?: RequestInit) => {
     if (url.includes('apihub.agnes-ai.com')) return Promise.resolve(agnesHandler(init))
+    if (url.includes('/api/services/quote')) {
+      if (!engineHandler) throw new Error('mockFetch: engine call not expected in this test')
+      return Promise.resolve(engineHandler(init))
+    }
     return Promise.resolve(jsonResponse({ ok: true }))
+  })
+}
+
+/** Engine quote response shaped like the admin's POST /api/services/quote. */
+function engineQuote(quoteNaira: number, serviceType: string, sla = 'Standard') {
+  return jsonResponse({
+    data: {
+      quoteNaira,
+      breakdown: {
+        serviceLabel: 'Full Buba',
+        serviceType,
+        quantity: 3,
+        sla,
+        leadTime: '5 working days',
+        basePrice: 35000,
+        expressSurcharge: 0,
+        deliveryFee: 0,
+        discount: 0,
+        finalPriceNaira: quoteNaira,
+      },
+    },
   })
 }
 
@@ -116,31 +145,27 @@ describe('POST /api/chat — validation', () => {
 
 describe('POST /api/chat — happy path', () => {
   test('should return cleaned assistant text, a parsed quote, and a session ID', async () => {
-    const content = `Great choice! A full buba is ₦35,000 each, so 3 will be ₦105,000.
-[QUOTE]
+    const content = `Great choice! A full buba works well for 3 people.
+[SPECS]
 {
-  "service_type": "fabric_buba",
-  "service_label": "Full Buba",
+  "service_type": "paberin_fabric_buba",
   "quantity": 3,
   "sla": "Standard",
-  "unit_price": 35000,
-  "subtotal": 105000,
-  "express_surcharge": 0,
-  "delivery_fee": 0,
-  "total": 105000,
-  "lead_time": "5 working days"
+  "delivery": "PICKUP"
 }
-[/QUOTE]`
-    mockFetch(() => jsonResponse(agnesCompletion(content)))
+[/SPECS]`
+    mockFetch(
+      () => jsonResponse(agnesCompletion(content)),
+      () => engineQuote(105000, 'paberin_fabric_buba')
+    )
 
     const { status, body } = await send(validBody)
     expect(status).toBe(200)
-    expect(body.assistant_text).not.toContain('[QUOTE]')
+    expect(body.assistant_text).not.toContain('[SPECS]')
     expect(body.assistant_text).toContain('Great choice!')
     expect(body.quote?.price).toBe(105000)
-    expect(body.quote?.breakdown?.serviceType).toBe('fabric_buba')
+    expect(body.quote?.breakdown?.serviceType).toBe('paberin_fabric_buba')
     expect(body.quote?.breakdown?.sla).toBe('Standard')
-    expect(body.quote?.breakdown?.leadTime).toBe('5 working days')
     expect(body.render_order_now).toBe(true)
     expect(body.sessionId).toMatch(/^pab_/)
     expect(body.error).toBeUndefined()
@@ -163,11 +188,17 @@ describe('POST /api/chat — happy path', () => {
 describe('POST /api/chat — Agnes failure handling', () => {
   test('should retry transient 5xx errors and succeed on the second attempt', async () => {
     let calls = 0
-    mockFetch(() => {
-      calls++
-      if (calls === 1) return jsonResponse({ error: 'upstream boom' }, 503)
-      return jsonResponse(agnesCompletion('Here is your quote: ₦20,000 naira.'))
-    })
+    mockFetch(
+      () => {
+        calls++
+        if (calls === 1) return jsonResponse({ error: 'upstream boom' }, 503)
+        return jsonResponse(agnesCompletion(`Your custom sheet cutting:
+[SPECS]
+{"service_type":"paberin_sheet_custom","quantity":1,"delivery":"PICKUP"}
+[/SPECS]`))
+      },
+      () => engineQuote(20000, 'paberin_sheet_custom')
+    )
 
     const { status, body } = await send(validBody)
     expect(status).toBe(200)
@@ -177,11 +208,17 @@ describe('POST /api/chat — Agnes failure handling', () => {
 
   test('should retry 429 rate-limit errors from Agnes', async () => {
     let calls = 0
-    mockFetch(() => {
-      calls++
-      if (calls === 1) return jsonResponse({ error: 'rate limited' }, 429)
-      return jsonResponse(agnesCompletion('Okay — the price is ₦35,000.'))
-    })
+    mockFetch(
+      () => {
+        calls++
+        if (calls === 1) return jsonResponse({ error: 'rate limited' }, 429)
+        return jsonResponse(agnesCompletion(`Wood engraving:
+[SPECS]
+{"service_type":"paberin_engraving_wood","quantity":1,"delivery":"PICKUP"}
+[/SPECS]`))
+      },
+      () => engineQuote(35000, 'paberin_engraving_wood')
+    )
 
     const { status, body } = await send(validBody)
     expect(status).toBe(200)

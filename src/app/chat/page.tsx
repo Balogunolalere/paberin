@@ -23,6 +23,7 @@ interface UIMessage extends ChatMessage {
   id: string;
   pending?: boolean;
   quote?: ChatResponse['quote'];
+  custom?: ChatResponse['custom'];
   renderOrderNow?: boolean;
   /** Message is a client-side failure notice, not an assistant reply — styled differently and never sent back as history. */
   isError?: boolean;
@@ -86,6 +87,8 @@ function ChatContent() {
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [pendingQuote, setPendingQuote] = useState<ChatResponse['quote'] | null>(null);
+  const [pendingCustom, setPendingCustom] = useState<ChatResponse['custom'] | null>(null);
+  const [openQuotes, setOpenQuotes] = useState<ChatResponse['openQuotes']>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Last customer query — passed to the order form so the customer's own
@@ -161,6 +164,7 @@ function ChatContent() {
                   content: res.assistant_text || '(no reply)',
                   pending: false,
                   quote: res.quote,
+                  custom: res.custom,
                   renderOrderNow: res.render_order_now,
                 }
               : m
@@ -168,6 +172,8 @@ function ChatContent() {
         );
 
         if (res.quote) setPendingQuote(res.quote);
+        if (res.custom) setPendingCustom(res.custom);
+        if (res.openQuotes?.length) setOpenQuotes(res.openQuotes);
       } catch (err: any) {
         const timedOut =
           err?.name === 'TimeoutError' ||
@@ -205,11 +211,30 @@ function ChatContent() {
     [messages, sending, sessionId]
   );
 
-  /** Build the /order handoff URL: quote JSON + the customer's own words. */
-  const orderUrl = useCallback((quote: ChatResponse['quote']) => {
+  /** Build the /order handoff URL from ENGINE specs (exact service_type). */
+  const orderUrl = useCallback((quote: NonNullable<ChatResponse['quote']>) => {
     const params = new URLSearchParams();
     params.set('from', 'chat');
-    params.set('quote', JSON.stringify(quote));
+    params.set('specs', JSON.stringify({
+      service_type: quote.breakdown?.serviceType || null,
+      quantity: (quote.breakdown?.quantity as number) || 1,
+      sla: quote.breakdown?.sla === 'Express' ? 'Express' : 'Standard',
+    }));
+    if (lastUserQueryRef.current) params.set('context', lastUserQueryRef.current.slice(0, 200));
+    return `/order?${params.toString()}`;
+  }, []);
+
+  /** Build the /order handoff URL for a custom (no-catalog-match) job. */
+  const customUrl = useCallback((custom: NonNullable<ChatResponse['custom']>) => {
+    const params = new URLSearchParams();
+    params.set('from', 'chat');
+    params.set('specs', JSON.stringify({
+      service_type: null,
+      custom_description: custom.description,
+      material: custom.material,
+      quantity: custom.quantity,
+      sla: custom.sla,
+    }));
     if (lastUserQueryRef.current) params.set('context', lastUserQueryRef.current.slice(0, 200));
     return `/order?${params.toString()}`;
   }, []);
@@ -299,7 +324,7 @@ function ChatContent() {
                         {m.quote && (
                           <div className="mt-3 pt-3 border-t border-current/20">
                             <p className="font-mono text-[10px] uppercase tracking-[0.12em] opacity-70 mb-1">
-                              Estimated Quote
+                              Confirmed Price
                             </p>
                             <p className="text-lg font-bold">
                               {formatNaira(m.quote.price)}
@@ -317,12 +342,30 @@ function ChatContent() {
                             )}
                           </div>
                         )}
+                        {m.custom && !m.renderOrderNow && (
+                          <div className="mt-3 pt-3 border-t border-current/20">
+                            <p className="font-mono text-[10px] uppercase tracking-[0.12em] opacity-70 mb-1">
+                              Custom job — pricing confirmed shortly
+                            </p>
+                          </div>
+                        )}
                         {m.renderOrderNow && (
                           <Link
                             href={orderUrl(m.quote!)}
                             className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide bg-white text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white border border-[#FF5C00] px-3 py-1.5 rounded-full transition-colors"
                           >
                             Order Now
+                            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                              <path d="M2 6h8M6 2l4 4-4 4" />
+                            </svg>
+                          </Link>
+                        )}
+                        {m.custom && !m.renderOrderNow && (
+                          <Link
+                            href={customUrl(m.custom)}
+                            className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide bg-white text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white border border-[#FF5C00] px-3 py-1.5 rounded-full transition-colors"
+                          >
+                            Place Custom Order
                             <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
                               <path d="M2 6h8M6 2l4 4-4 4" />
                             </svg>
@@ -410,6 +453,50 @@ function ChatContent() {
                 >
                   Place This Order
                 </Link>
+              </div>
+            </ScrollReveal>
+          )}
+
+          {pendingCustom && (
+            <ScrollReveal>
+              <div className="card border-[#FF5C00]/30 bg-[#FFF7F0]">
+                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#E05200] mb-3">
+                  Custom Job
+                </p>
+                <p className="text-sm font-bold text-black mb-1">{pendingCustom.description}</p>
+                {pendingCustom.material && (
+                  <p className="text-xs text-[#666666]">Material: {pendingCustom.material}</p>
+                )}
+                <Link
+                  href={customUrl(pendingCustom)}
+                  className="btn-primary mt-4 w-full"
+                >
+                  Place Custom Order
+                </Link>
+              </div>
+            </ScrollReveal>
+          )}
+
+          {openQuotes && openQuotes.length > 0 && (
+            <ScrollReveal>
+              <div className="card">
+                <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#888888] mb-3">
+                  Your saved quote{openQuotes.length > 1 ? 's' : ''}
+                </p>
+                {openQuotes.slice(0, 3).map((q) => (
+                  <div key={q.id} className="flex items-center justify-between py-2 border-b border-[#EAEAEA] last:border-0">
+                    <div>
+                      <p className="text-sm font-bold text-black">{formatNaira(q.totalAmount)}</p>
+                      <p className="text-[10px] font-mono text-[#888888]">{q.quoteNumber}</p>
+                    </div>
+                    <Link
+                      href="/dashboard"
+                      className="text-xs text-[#FF5C00] hover:underline font-medium"
+                    >
+                      Review &amp; pay
+                    </Link>
+                  </div>
+                ))}
               </div>
             </ScrollReveal>
           )}

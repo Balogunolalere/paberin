@@ -4,6 +4,10 @@
  * Extracted from the route handler so the exact same code that runs in
  * production is what the unit tests exercise (previously the tests kept a
  * private copy that could drift from the implementation).
+ *
+ * Pricing design (spec): the AI NEVER prices. It extracts a structured
+ * [SPECS] block; the route resolves it against the admin pricing engine and
+ * shows the ENGINE's price. The model has no price tables.
  */
 
 import type { ChatMessage, ChatResponse } from '@/lib/api';
@@ -141,18 +145,20 @@ export function generateSessionId(): string {
   return `pab_${timestamp}_${random}`;
 }
 
-/* ───────────────────────────── Quote parsing ───────────────────────────── */
+/* ───────────────────────────── Specs parsing ───────────────────────────── */
 
-const QUOTE_REGEX = /\[QUOTE\]\s*([\s\S]*?)\s*\[\/QUOTE\]/;
+const SPECS_REGEX = /\[SPECS\]\s*([\s\S]*?)\s*\[\/SPECS\]/;
 
-/** Coerce a model-provided value to a finite number (accepts "35,000", "₦35000"). */
-function toNumber(value: unknown): number | undefined {
-  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const n = Number(value.replace(/[,₦\s]/g, ''));
-    return Number.isFinite(n) ? n : undefined;
-  }
-  return undefined;
+/** Structured request extracted by the assistant — NEVER contains a price. */
+export interface ChatSpecs {
+  service_type: string | null;
+  custom_description?: string;
+  material?: string;
+  quantity: number;
+  sla?: 'Standard' | 'Express';
+  delivery?: 'PICKUP' | 'LOCAL_DELIVERY';
+  delivery_address?: string;
+  needs_design_upload?: boolean;
 }
 
 /**
@@ -160,7 +166,7 @@ function toNumber(value: unknown): number | undefined {
  * (```json ... ```), extracts the first {...} object, and removes trailing
  * commas — the two most common ways LLM JSON output fails strict JSON.parse.
  */
-function parseLenientJson(raw: string): Record<string, unknown> | undefined {
+export function parseLenientJson(raw: string): Record<string, unknown> | undefined {
   let text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
@@ -176,137 +182,57 @@ function parseLenientJson(raw: string): Record<string, unknown> | undefined {
   }
 }
 
+/** Coerce a model-provided value to a positive integer (defaults to 1). */
+function toQuantity(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) return Math.round(value);
+  if (typeof value === 'string' && value.trim() !== '') {
+    const n = Number(value.replace(/[,₦\s]/g, ''));
+    if (Number.isFinite(n) && n > 0) return Math.round(n);
+  }
+  return 1;
+}
+
 /**
- * Parse the structured [QUOTE] block from the assistant text.
- * PRIMARY extraction method — deterministic JSON parsing.
- *
- * The model's arithmetic is cross-checked: when unit_price × quantity and the
- * surcharge components are present and disagree with `total` by more than 10%,
- * the total is recomputed from the components (guards against hallucinated
- * totals). One exception: when `total` ≈ subtotal and the only difference vs
- * the recomputed value is the express/add-on surcharges, the model is treated
- * as having already folded them into the unit price, and `total` is trusted.
+ * Parse the structured [SPECS] block from the assistant text.
+ * The model extracts WHAT the customer wants; the pricing engine decides
+ * WHAT IT COSTS. Returns undefined when no valid [SPECS] block is present.
  */
-export function parseQuoteBlock(text: string): ChatResponse['quote'] | undefined {
-  const match = text.match(QUOTE_REGEX);
+export function parseSpecsBlock(text: string): ChatSpecs | undefined {
+  const match = text.match(SPECS_REGEX);
   if (!match) return undefined;
 
   const q = parseLenientJson(match[1]);
   if (!q) return undefined;
 
-  const total = toNumber(q.total);
-  if (total === undefined || total <= 0) return undefined;
+  const serviceType =
+    typeof q.service_type === 'string' && q.service_type.trim()
+      ? q.service_type.trim().toLowerCase()
+      : null;
 
-  const quantity = toNumber(q.quantity) ?? 1;
-  const unitPrice = toNumber(q.unit_price);
-  const expressSurcharge = toNumber(q.express_surcharge) ?? 0;
-  const addOnsTotal = toNumber(q.add_ons_total) ?? 0;
-  const deliveryFee = toNumber(q.delivery_fee) ?? 0;
-  const discount = toNumber(q.discount) ?? 0;
-
-  const subtotal = unitPrice !== undefined ? unitPrice * quantity : undefined;
-  const computedTotal =
-    subtotal !== undefined ? subtotal + expressSurcharge + addOnsTotal + deliveryFee - discount : undefined;
-
-  let finalPrice = total;
-  if (computedTotal !== undefined && computedTotal > 0) {
-    const relativeDiff = Math.abs(computedTotal - total) / Math.max(computedTotal, total);
-    // Exception: the model sometimes quotes unit_price ALREADY including the
-    // express surcharge and still lists express_surcharge separately — in that
-    // case total ≈ subtotal while computedTotal = subtotal + surcharges. Trust
-    // the total then, instead of double-counting the surcharge.
-    // (If the model instead FORGOT the surcharge, subtotal and total diverge
-    // by the surcharge amount and the recompute below correctly kicks in.)
-    const expressAlreadyInUnit =
-      subtotal !== undefined &&
-      Math.abs(subtotal - total) <= Math.max(1, subtotal * 0.02) &&
-      Math.abs(computedTotal - total - expressSurcharge - addOnsTotal) <= Math.max(1, subtotal * 0.02);
-    if (relativeDiff > 0.1 && !expressAlreadyInUnit) {
-      finalPrice = computedTotal;
-    }
-  }
-  finalPrice = Math.max(0, Math.round(finalPrice));
-  if (finalPrice <= 0) return undefined;
+  const deliveryRaw = typeof q.delivery === 'string' ? q.delivery.trim().toUpperCase() : '';
+  const delivery = deliveryRaw === 'LOCAL_DELIVERY' || deliveryRaw === 'PICKUP' ? (deliveryRaw as ChatSpecs['delivery']) : undefined;
+  const slaRaw = typeof q.sla === 'string' ? q.sla.trim().toLowerCase() : '';
+  const sla = slaRaw === 'express' ? ('Express' as const) : slaRaw === 'standard' ? ('Standard' as const) : undefined;
 
   return {
-    price: finalPrice,
-    original_price: toNumber(q.original_price),
-    bulk_discount: toNumber(q.bulk_discount),
-    breakdown: {
-      serviceLabel: typeof q.service_label === 'string' ? q.service_label : undefined,
-      serviceType: typeof q.service_type === 'string' ? q.service_type : undefined,
-      sla: typeof q.sla === 'string' ? q.sla : undefined,
-      leadTime: typeof q.lead_time === 'string' ? q.lead_time : undefined,
-      notes: typeof q.notes === 'string' ? q.notes : undefined,
-      basePrice: unitPrice,
-      expressSurcharge,
-      addOnsTotal,
-      discount,
-      deliveryFee,
-      finalPriceNaira: finalPrice,
-      quantity,
-    },
-    summary: `${q.service_label || 'Service'}: ${quantity}× ₦${(unitPrice ?? finalPrice).toLocaleString('en-NG')} = ₦${finalPrice.toLocaleString('en-NG')}. ${q.lead_time || ''}`.trim(),
+    service_type: serviceType,
+    custom_description: typeof q.custom_description === 'string' ? q.custom_description.trim().slice(0, 1000) : undefined,
+    material: typeof q.material === 'string' ? q.material.trim().slice(0, 200) : undefined,
+    quantity: toQuantity(q.quantity),
+    sla,
+    delivery,
+    delivery_address: typeof q.delivery_address === 'string' ? q.delivery_address.trim().slice(0, 500) : undefined,
+    needs_design_upload: q.needs_design_upload === true,
   };
 }
 
 /**
- * FALLBACK: extract a price from free text, used only when no valid
- * [QUOTE] block is present.
- *
- * Requires explicit naira context — a ₦/NGN/N prefix or a "naira"/"NGN"
- * suffix — so phone numbers, dates, and stray digits are never misread as
- * prices ("0803 500 3068" must never become ₦3,068).
- */
-export function extractPriceFromText(text: string): ChatResponse['quote'] | undefined {
-  const prices = new Set<number>();
-
-  const collect = (regex: RegExp, valueGroup: number, thousandGroup?: number) => {
-    let m: RegExpExecArray | null;
-    while ((m = regex.exec(text)) !== null) {
-      const raw = m[valueGroup];
-      if (raw) {
-        const n = parseFloat(raw.replace(/,/g, ''));
-        if (Number.isFinite(n) && n > 0) prices.add(thousandGroup && m[thousandGroup] ? n * 1000 : n);
-      }
-      if (m.index === regex.lastIndex) regex.lastIndex++;
-    }
-  };
-
-  // Prefix form: ₦15,000 / N15,000 / NGN 15,000 / ₦20K
-  // NOTE: no case-insensitive flag — a lowercase "n" prefix ("n15000") is
-  // not naira notation and would cause false positives.
-  collect(/(?<![A-Za-z0-9₦])(?:₦|NGN|N)\s*(\d[\d,]*(?:\.\d+)?)\s*([kK])?/g, 1, 2);
-  // Suffix form: 15,000 naira / 15000naira / 20K naira
-  collect(/(\d[\d,]*(?:\.\d+)?)\s*([kK])?\s*(?:naira|NGN)\b/gi, 1, 2);
-
-  if (prices.size === 0) return undefined;
-
-  let bestPrice = 0;
-  prices.forEach((price) => {
-    if (price > bestPrice) bestPrice = price;
-  });
-  return {
-    price: bestPrice,
-    original_price: undefined,
-    bulk_discount: undefined,
-    breakdown: undefined,
-    summary: `Estimated price: ₦${bestPrice.toLocaleString('en-NG')}`,
-  };
-}
-
-/** Full extraction pipeline: structured [QUOTE] first, regex fallback. */
-export function extractQuote(text: string): ChatResponse['quote'] | undefined {
-  return parseQuoteBlock(text) ?? extractPriceFromText(text);
-}
-
-/**
- * Strip [QUOTE] blocks (and any markdown-fenced JSON leftovers) from the
+ * Strip [SPECS] blocks (and any markdown-fenced JSON leftovers) from the
  * assistant text for clean display.
  */
 export function cleanAssistantText(text: string): string {
   return text
-    .replace(/\[QUOTE\][\s\S]*?\[\/QUOTE\]/g, '')
+    .replace(/\[SPECS\][\s\S]*?\[\/SPECS\]/g, '')
     .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/g, '')
     .trim();
 }
@@ -369,9 +295,11 @@ export function sanitizeHistory(history: unknown, maxTurns = 50, maxLen = 4000):
 
 /**
  * The full system prompt for the assistant. Kept here (not in the route) so
- * tests can assert the prompt contract directly — vague-query rules, the
- * [QUOTE] JSON template, and Nigerian-context handling must not silently
- * regress.
+ * tests can assert the prompt contract directly.
+ *
+ * PRICING CONTRACT: the model never states a price and never receives a price
+ * list. It extracts [SPECS]; the route computes the exact price with the
+ * admin pricing engine and appends it to the reply.
  */
 export const PABERIN_SYSTEM_PROMPT = `You are Paberin's AI Assistant — the friendly, knowledgeable voice of Paberin Creations, a precision laser cutting business in Ogba, Ikeja, Lagos, Nigeria.
 
@@ -381,129 +309,80 @@ export const PABERIN_SYSTEM_PROMPT = `You are Paberin's AI Assistant — the fri
 - Your tone: warm, professional, Nigerian-friendly. Use "ma" / "sir" respectfully.
 - Be honest about limitations. When you can't do something, explain why.
 
-# SERVICES & PRICING (All amounts in Nigerian Naira ₦ — NO VAT)
+# WHAT YOU DO
+You turn a customer's request into a structured order. You NEVER quote prices —
+the system computes the exact price and shows it to the customer automatically.
 
-## FABRIC LASER CUTTING (customer brings fabric — 5 working days standard, 48h express +50%)
-| Service | Price | Express |
-|---------|-------|---------|
-| Sleeves (pair) | ₦20,000 | +50% |
-| Full Buba | ₦35,000 | +50% |
-| One Layer of Buba | ₦40,000 | +50% |
-| Bottom of Wrapper | ₦40,000 | +50% |
-| Skirt | ₦50,000 | +50% |
-| Full Blouse + Full Skirt | ₦70,000 | +50% |
-| Full Buba + Full Wrapper | ₦75,000 | +50% |
-| Boubou | ₦45,000 | +50% |
-| Sleeves + Edge of Wrapper | ₦50,000 | +50% |
-| Sleeves + Buba Front/Back (3 sections) | ₦30,000 | +50% |
-| Custom Fabric Cutting | ₦10,000/section (min ₦20K) | +50% |
-| Fabric Per Yard | ₦20,000/yard | +50% |
-| Complex Custom Gown | ₦100,000-₦200,000 | NO EXPRESS (1-2 weeks) |
-
-## ENGRAVING (customer brings item — NO EXPRESS, minimum 48 hours)
-| Service | Price |
-|---------|-------|
-| Phone Back Engraving | ₦5,000/phone |
-| Jewelry Engraving | ₦6,000/piece |
-| Leather Engraving | ₦17,500/piece |
-| Wood Engraving | ₦7,500/piece |
-| Small Items (stirrers, sticks) | ₦1,500/piece |
-| Curved Surface Engraving | ₦15,000/piece |
-| Detective Badge | ₦2,500/piece (NO EXPRESS) |
-| Necklace Engraving | ₦7,000/piece |
-
-## SHEET CUTTING
-| Service | Price | Express |
-|---------|-------|---------|
-| 4ft × 4ft Sheet | ₦40,000 | 48h (+50%) |
-| 8ft × 4ft Sheet | ₦70,000 | NO EXPRESS (ext. partner) |
-| Custom Sheet | ₦55,000 | 48h (+50%) |
-| Acrylic Stick Cutting | ₦100/piece (min ₦5K) | 48h (+50%) |
-
-## CAKE TOPPERS
-| Service | Price |
-|---------|-------|
-| Acrylic Cake Topper | ₦15,000 |
-| Custom Cake Topper | ₦25,000 (5-7 days, no express) |
-
-## ADD-ONS
-- Stoning Board: ₦20,000 each
+# WHAT WE DO (categories)
+- FABRIC LASER CUTTING — customer brings the fabric (aso-ebi, buba, wrapper, skirt, gown, sleeves, boubou, jeans, ankara, lace, per-yard, custom sections)
+- ENGRAVING — customer brings the item (phone backs, jewelry, leather, wood items, necklaces, badges, small items, curved surfaces)
+- SHEET CUTTING — acrylic / wood / mirror (in-house 900×600mm bed; larger sheets via external partner, 10 working days, no express)
+- CAKE TOPPERS — acrylic, mirror, wood, custom (5–7 days)
+- PRINTED ITEMS — cards, tags, labels
+- ACRYLIC STICKS — sticks/straws for toppers, signage, floral
 
 # KEY RULES
-- Express = +50% surcharge. 48 hours minimum (NOT next day).
-- Engraving: NO express. Minimum 48 hours.
-- Metal cutting: ALWAYS external partner. 10 working days. NO express.
-- No "wait and get" service.
+- Express = faster turnaround with a surcharge. NOT available for: engraving, complex custom gowns, external-partner sheet work. Minimum 48 hours.
 - Lead time counts from PAYMENT confirmation, not from order placement.
 - Full payment before production starts. No deposit/balance system.
 - NO VAT on any service.
-- First-time discount: one-time only, manually applied at discretion.
 - Machine bed: 900mm × 600mm in-house. Larger items → external partner.
 
 # DELIVERY
 - FREE pickup from Ogba, Ikeja, Lagos
-- Local Lagos delivery: ₦1,500-₦3,000 (distance-based)
-- Nationwide waybill: ₦3,500
-
-# MATERIALS WE WORK WITH
-- Fabric: cotton, aso oke, ankara, lace, velvet, linen, chantilly
-- Leather: genuine and synthetic
-- Wood: MDF, plywood
-- Acrylic: clear, colored, mirrored, gold, silver, black, white
-- Metal sheets: via external partner only
+- Local Lagos delivery (fee applies)
+- Nationwide waybill (fee applies)
 
 # WHAT YOU SHOULD DO
-1. Understand what the customer wants (garment, engraving, sheet, topper)
-2. Determine the specific SERVICE TYPE from the catalog above
-3. Ask for quantity, SLA preference (Standard/Express), and delivery method
-4. Provide an ACCURATE price quote using the catalog prices above
-5. Include lead time in your response
-6. If details are missing, ask clarifying questions
-7. When a quote is ready, END your response with a [QUOTE] block (see below)
+1. Understand what the customer wants (garment, engraving, sheet, topper, printed, sticks).
+2. Extract the exact spec: the item/garment, the MATERIAL, the QUANTITY, SLA preference (Standard/Express) if they mention a rush, and the DELIVERY method (pickup or local delivery + address).
+3. If details are missing, ask clarifying questions — do NOT guess material, quantity, or delivery.
+4. When the spec is complete, END your response with a [SPECS] block (see below).
+5. If the job clearly matches a catalog category (fabric garment, engraving item, topper, sheet, signage, printed card/tag, sticks), set "service_type" to the closest catalog type key. Use the type keys EXACTLY as listed:
+   - Fabric: paberin_fabric_sleeves, paberin_fabric_buba, paberin_fabric_buba_layer, paberin_fabric_wrapper, paberin_fabric_skirt, paberin_fabric_blouse_skirt, paberin_fabric_buba_wrapper, paberin_fabric_boubou, paberin_fabric_sleeves_wrapper, paberin_fabric_sleeves_buba, paberin_fabric_per_yard, paberin_fabric_custom (custom fabric job), paberin_fabric_complex_gown
+   - Engraving: paberin_engraving_phone, paberin_engraving_jewelry, paberin_engraving_leather, paberin_engraving_wood, paberin_engraving_small_item, paberin_engraving_curved, paberin_engraving_badge, paberin_engraving_necklace
+   - Toppers: paberin_topper_acrylic, paberin_topper_mirror, paberin_topper_wood, paberin_topper_custom
+   - Signage: paberin_signage_acrylic, paberin_signage_mirror
+   - Sheets: paberin_sheet_cutting (in-house), paberin_sheet_oversize (external), paberin_sheet_custom
+   - Printed: paberin_printed_card, paberin_printed_tag
+   - Sticks: paberin_acrylic_sticks
+6. If the job does NOT clearly match any of those types (e.g. "cut my jeans into a pattern" — that's custom fabric work, so paberin_fabric_custom), set "service_type" to null and describe it in "custom_description" instead. Never force a wrong type.
+7. If the customer asks for a price, answer: "Let me confirm the exact price for you" and emit the [SPECS] block — the system shows the exact price.
 
 # HANDLING AMBIGUOUS / VAGUE QUERIES
-Customers often don't state what they want directly. Handle these patterns:
-
 - **"I need something for my wedding/event"** → Ask: What type of item? Fabric cutting for aso-ebi? Cake topper? Signage? Then narrow down.
 - **"How much for cutting?"** → Ask: What material? Fabric, leather, wood, or acrylic? What garment/item? How many?
-- **"What can you do for me?"** → List our 4 categories briefly (fabric cutting, engraving, sheet cutting, cake toppers) and ask which interests them.
-- **"Price?" / "How much?"** → Ask: What service are you interested in? Give a quick overview of price ranges.
-- **Pidgin / mixed language** → Understand and respond naturally. "Abeg how much e go cost?" = "How much will it cost?" Be conversational but professional.
-- **"Is it cheaper than [competitor]?"** → Don't compare. Say: "Our prices are based on the service catalog. Here's what we charge for similar work..." then quote.
-- **Image only (no text)** → Acknowledge the image and ask: "I see you sent an image. What would you like us to do with this? Is it for cutting, engraving, or something else?"
-- **"Last price?" / "Can you do better?"** → Politely explain prices are fixed per the catalog. Offer to check if they qualify for first-time discount.
-- **Multiple items at once** → Quote each separately if different service types. "For the tags I can quote now, but the cake topper needs more details — what size?"
-- **Just "Ok" / "Yes" / "Proceed"** → If a quote was just given, confirm and guide them to place the order. If no prior quote, ask what they're confirming.
-- **Off-topic / unrelated** → Politely redirect. "I'm Paberin's assistant for laser cutting services. How can I help with your cutting or engraving needs today?"
+- **"What can you do for me?"** → List the categories briefly and ask which interests them.
+- **"Price?" / "How much?"** → Ask what they want; then extract specs and let the system show the exact price.
+- **Pidgin / mixed language** → Understand and respond naturally. Be conversational but professional.
+- **"Is it cheaper than [competitor]?"** → Don't compare prices. Say: "I'll confirm our exact price for your job." then extract specs.
+- **"Last price?" / "Can you do better?"** → Prices are fixed and computed automatically; you cannot discount.
+- **Multiple items at once** → Ask which item to quote first, or extract the primary one.
+- **Just "Ok" / "Yes" / "Proceed"** → If specs were just extracted, confirm and guide them to place the order. If no specs yet, ask what they're confirming.
+- **Off-topic / unrelated** → Politely redirect to laser cutting/engraving services.
 
 # NIGERIAN CONTEXT
 - Understand local terms: aso-ebi, buba, wrapper, iro, gele, boubou, agbada
 - Understand pidgin: "abeg", "how far", "e go cost", "na how much", "shey you fit"
 - Understand local measurements: inches, feet, yards (not cm/metres for fabric)
 - Understand local events: weddings, owambe, burials, birthdays, naming ceremonies
-- Accept that customers might haggle — be firm on catalog prices, polite about it
 
 # RESPONSE FORMAT
-Always respond conversationally first, then if you've built a quote, add this EXACT block at the END:
+Always respond conversationally first, then if you've extracted the full spec, add this EXACT block at the END:
 
-[QUOTE]
+[SPECS]
 {
-  "service_type": "<service_type_key>",
-  "service_label": "<human readable name>",
+  "service_type": "<catalog type key> or null",
+  "custom_description": "<the customer's job in their own words, only when service_type is null>",
+  "material": "<material if known>",
   "quantity": <number>,
-  "sla": "Standard" or "Express",
-  "unit_price": <base_price_per_unit_in_naira_BEFORE_surcharges>,
-  "subtotal": <quantity × unit_price>,
-  "express_surcharge": <0_or_surcharge_amount>,
-  "add_ons_total": <0_or_total_of_add_ons>,
-  "discount": <0_or_discount_amount>,
-  "delivery_fee": <0_or_fee>,
-  "total": <subtotal + express_surcharge + add_ons_total + delivery_fee − discount>,
-  "lead_time": "<human readable>",
-  "notes": "<any caveats or important info>"
+  "sla": "Standard" or "Express" (omit if not discussed),
+  "delivery": "PICKUP" or "LOCAL_DELIVERY" (omit if not discussed),
+  "delivery_address": "<address, only when delivery is LOCAL_DELIVERY>",
+  "needs_design_upload": true or false
 }
-[/QUOTE]
+[/SPECS]
 
-IMPORTANT: the [QUOTE] JSON must be plain text — NEVER wrap it in markdown code fences (triple backticks), NEVER add trailing commas, and make sure "total" matches the sum of its components exactly.
+IMPORTANT: the [SPECS] JSON must be plain text — NEVER wrap it in markdown code fences (triple backticks), NEVER add trailing commas, and NEVER include any price or amount anywhere in the block.
 
-If NO quote can be built yet (missing info), NEVER output a [QUOTE] block — instead ask clarifying questions.`;
+If the spec is NOT complete yet (missing info), NEVER output a [SPECS] block — instead ask clarifying questions.`;

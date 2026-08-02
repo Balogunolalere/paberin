@@ -4,7 +4,7 @@
  * OrderStepper — horizontal progress stepper for an order's lifecycle.
  *
  * Renders the Paberin order flow as a row of numbered nodes with a
- * filling track. `current` is the state the order is in right now;
+ * filling track. `current` is the order's state (admin OrderState enum);
  * everything before it is marked done, everything after is pending.
  *
  * Purely presentational — no data fetching, no side effects.
@@ -12,26 +12,24 @@
 
 const FLOW = [
   'PAYMENT_SUCCESS',
-  'IN_PROGRESS',
-  'CUTTING',
-  'QC',
-  'READY_FOR_PICKUP',
-  'OUT_FOR_DELIVERY',
+  'IN_QUEUE',
+  'IN_PRODUCTION',
+  'READY',
+  'DISPATCHED',
   'DELIVERED',
 ] as const;
 
 const LABELS: Record<string, string> = {
-  PAYMENT_SUCCESS: 'Confirmed',
-  IN_PROGRESS: 'In Prod',
-  CUTTING: 'Cutting',
-  QC: 'QC',
-  READY_FOR_PICKUP: 'Ready',
-  OUT_FOR_DELIVERY: 'Out',
+  PAYMENT_SUCCESS: 'Paid',
+  IN_QUEUE: 'Queued',
+  IN_PRODUCTION: 'Cutting',
+  READY: 'Ready',
+  DISPATCHED: 'Out',
   DELIVERED: 'Done',
 };
 
 interface OrderStepperProps {
-  /** The order's current state, e.g. 'CUTTING'. */
+  /** The order's current state, e.g. 'IN_PRODUCTION'. */
   current: string;
   /** Smaller node size for tight layouts. */
   compact?: boolean;
@@ -39,8 +37,8 @@ interface OrderStepperProps {
 }
 
 export function OrderStepper({ current, compact = false, className = '' }: OrderStepperProps) {
-  // Terminal/cancelled states — render nothing (no progress to show).
-  const terminal = ['CANCELLED', 'REFUNDED', 'PAYMENT_PENDING', 'ON_HOLD', 'COMPLETED'];
+  // Terminal/cancelled/pending-payment states — render nothing (no progress to show).
+  const terminal = ['CANCELLED', 'REFUNDED', 'PAYMENT_PENDING', 'QUOTING', 'ON_HOLD'];
   if (terminal.includes(current)) return null;
 
   const currentIdx = FLOW.indexOf(current as (typeof FLOW)[number]);
