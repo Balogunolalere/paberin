@@ -338,6 +338,10 @@ export async function POST(request: NextRequest) {
     }
 
     // ── Build messages for Agnes ──
+    // Thread the FULL sanitized conversation (user+assistant turns) so
+    // follow-up messages keep their context. We use the client-supplied
+    // `history` when present — context NEVER comes from sessionId alone
+    // (sessionId is only echoed back and used for admin session saves).
     const agnesMessages = [
       {
         role: 'system' as const,

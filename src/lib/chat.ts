@@ -147,7 +147,9 @@ export function generateSessionId(): string {
 
 /* ───────────────────────────── Specs parsing ───────────────────────────── */
 
-const SPECS_REGEX = /\[SPECS\]\s*([\s\S]*?)\s*\[\/SPECS\]/;
+// Case-insensitive: models emit [SPECS]…[/SPECS] and [specs]…[/specs]
+// interchangeably — both must be recognized or the order never gets priced.
+const SPECS_REGEX = /\[SPECS\]\s*([\s\S]*?)\s*\[\/SPECS\]/i;
 
 /** Structured request extracted by the assistant — NEVER contains a price. */
 export interface ChatSpecs {
@@ -162,24 +164,114 @@ export interface ChatSpecs {
 }
 
 /**
+ * Minimal JSON-ish → strict JSON cleanup for model output.
+ *
+ * Models frequently emit near-JSON like:
+ *   {service_type: paberin_fabric_buba, quantity: 1}
+ *   {'service_type': 'paberin_fabric_buba', quantity: 1}
+ *
+ * This tiny tokenizer normalizes exactly those three deviations:
+ *  - unquoted object keys → quoted
+ *  - unquoted plain-word string values (identifiers) → quoted
+ *  - single-quoted strings → double-quoted
+ * Numbers, null/true/false stay bare. Anything structurally surprising
+ * (unterminated string, stray punctuation) makes it bail with '' so the
+ * caller falls back to "not parseable" instead of a wrong parse.
+ * Dependency-free by design — no new npm packages.
+ */
+function laxJsonToStrict(text: string): string {
+  let out = '';
+  let i = 0;
+  const n = text.length;
+
+  while (i < n) {
+    const ch = text[i];
+
+    if (ch === '"' || ch === "'") {
+      // Copy a quoted string, normalizing single quotes to double quotes.
+      const quote = ch;
+      i++;
+      let s = '"';
+      let closed = false;
+      while (i < n) {
+        const c = text[i];
+        if (c === '\\' && i + 1 < n) {
+          const next = text[i + 1];
+          // Escape the quote char regardless of which quote style opened it.
+          s += next === quote || next === '"' ? '\\"' : `\\${next}`;
+          i += 2;
+          continue;
+        }
+        if (c === quote) {
+          closed = true;
+          i++;
+          break;
+        }
+        if (c === '\n' || c === '\r') break; // unterminated line — bail below
+        // Escape any double quotes found inside a single-quoted string so
+        // the output stays valid JSON (e.g. 'he said "hi"').
+        s += c === '"' ? '\\"' : c;
+        i++;
+      }
+      if (!closed) return ''; // unterminated string — refuse to guess
+      out += `${s}"`;
+    } else if (ch === '{' || ch === '}' || ch === '[' || ch === ']' || ch === ':' || ch === ',') {
+      out += ch;
+      i++;
+    } else if (ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r') {
+      i++; // whitespace outside strings is insignificant
+    } else {
+      // Bare token: read until a delimiter. Keys end at ':', values at ','/'}'.
+      let token = '';
+      while (i < n && !/[\s,}\]:]/.test(text[i])) {
+        token += text[i];
+        i++;
+      }
+      if (token === '') {
+        i++;
+        continue;
+      }
+      if (/^-?\d+(\.\d+)?$/.test(token) || token === 'null' || token === 'true' || token === 'false') {
+        out += token;
+      } else {
+        out += `"${token.replace(/"/g, '\\"')}"`;
+      }
+    }
+  }
+  return out;
+}
+
+/**
  * Lenient JSON parse for model output: strips markdown code fences
- * (```json ... ```), extracts the first {...} object, and removes trailing
- * commas — the two most common ways LLM JSON output fails strict JSON.parse.
+ * (```json ... ```), extracts the first {...} object, and tolerates
+ * trailing commas, unquoted keys, unquoted plain-word values, and
+ * single-quoted strings. Never throws — returns undefined on failure.
  */
 export function parseLenientJson(raw: string): Record<string, unknown> | undefined {
   let text = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start === -1 || end <= start) return undefined;
-  text = text.slice(start, end + 1).replace(/,\s*([}\]])/g, '$1');
-  try {
-    const parsed = JSON.parse(text);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-      ? (parsed as Record<string, unknown>)
-      : undefined;
-  } catch {
-    return undefined;
+  text = text.slice(start, end + 1);
+
+  // Fast path: already-valid JSON (possibly with trailing commas).
+  // Slow path: the lax tokenizer, for models that skip the quotes.
+  const candidates = [text];
+  const lax = laxJsonToStrict(text);
+  if (lax && lax !== text) candidates.push(lax);
+
+  for (const candidate of candidates) {
+    const cleaned = candidate.replace(/,\s*([}\]])/g, '$1'); // trailing commas
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // try the next candidate
+    }
   }
+  return undefined;
 }
 
 /** Coerce a model-provided value to a positive integer (defaults to 1). */
@@ -232,7 +324,7 @@ export function parseSpecsBlock(text: string): ChatSpecs | undefined {
  */
 export function cleanAssistantText(text: string): string {
   return text
-    .replace(/\[SPECS\][\s\S]*?\[\/SPECS\]/g, '')
+    .replace(/\[SPECS\][\s\S]*?\[\/SPECS\]/gi, '')
     .replace(/```(?:json)?\s*\{[\s\S]*?\}\s*```/g, '')
     .trim();
 }
@@ -322,6 +414,7 @@ the system computes the exact price and shows it to the customer automatically.
 - ACRYLIC STICKS — sticks/straws for toppers, signage, floral
 
 # KEY RULES
+- LANGUAGE: Always respond in the customer's language — Nigerian English or Pidgin English — never in any other language. If the customer writes in English or Pidgin, reply in English/Pidgin; never switch to Chinese, French, Yoruba, or any other language unless the customer themselves writes in that language. When in doubt, default to clear, friendly English.
 - Express = faster turnaround with a surcharge. NOT available for: engraving, complex custom gowns, external-partner sheet work. Minimum 48 hours.
 - Lead time counts from PAYMENT confirmation, not from order placement.
 - Full payment before production starts. No deposit/balance system.

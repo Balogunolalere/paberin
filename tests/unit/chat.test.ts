@@ -131,6 +131,96 @@ describe('parseSpecsBlock — structured [SPECS] extraction', () => {
     expect((specs as any).total).toBeUndefined()
     expect((specs as any).unit_price).toBeUndefined()
   })
+
+  test('should never leak price/cost/amount fields — even leniently parsed', () => {
+    // No-price enforcement must hold for unquoted/single-quoted input too:
+    // whatever the model sneaks in, the parsed ChatSpecs carries no price.
+    const quoted = parseSpecsBlock('[SPECS] {"service_type":"x","quantity":1,"price":5000,"cost":2000,"amount":7000} [/SPECS]')
+    expect(quoted).toBeDefined()
+    expect((quoted as any).price).toBeUndefined()
+    expect((quoted as any).cost).toBeUndefined()
+    expect((quoted as any).amount).toBeUndefined()
+    expect(quoted!.quantity).toBe(1)
+
+    const unquoted = parseSpecsBlock("[SPECS] {service_type: x, quantity: 2, price: 5000, cost: 2000, amount: 7000} [/SPECS]")
+    expect(unquoted).toBeDefined()
+    expect((unquoted as any).price).toBeUndefined()
+    expect((unquoted as any).cost).toBeUndefined()
+    expect((unquoted as any).amount).toBeUndefined()
+    expect(unquoted!.quantity).toBe(2)
+  })
+
+  test('should parse lowercase [specs]…[/specs] blocks', () => {
+    // Bug 1: the regex was case-sensitive, so lowercase blocks were silently
+    // ignored and the chat fell back to the custom handoff (never priced).
+    const specs = parseSpecsBlock('[specs]{"service_type":"paberin_fabric_buba","quantity":1}[/specs]')
+    expect(specs).toBeDefined()
+    expect(specs!.service_type).toBe('paberin_fabric_buba')
+    expect(specs!.quantity).toBe(1)
+
+    // Mixed case, surrounded by conversational text.
+    const mixed = parseSpecsBlock('Okay ma:\n[Specs]\n{"service_type":"paberin_topper_acrylic","quantity":4}\n[/SPECS]')
+    expect(mixed).toBeDefined()
+    expect(mixed!.service_type).toBe('paberin_topper_acrylic')
+  })
+
+  test('should parse unquoted object keys', () => {
+    // Bug 2: models emit {service_type: paberin_fabric_buba, quantity: 1}.
+    const specs = parseSpecsBlock('[SPECS] {service_type: paberin_fabric_buba, quantity: 1} [/SPECS]')
+    expect(specs).toBeDefined()
+    expect(specs!.service_type).toBe('paberin_fabric_buba')
+    expect(specs!.quantity).toBe(1)
+  })
+
+  test('should parse unquoted keys with unquoted values across lines', () => {
+    const specs = parseSpecsBlock(`[SPECS]
+{
+  service_type: paberin_engraving_wood,
+  material: mahogany,
+  quantity: 3,
+  sla: Express
+}
+[/SPECS]`)
+    expect(specs).toBeDefined()
+    expect(specs!.service_type).toBe('paberin_engraving_wood')
+    expect(specs!.material).toBe('mahogany')
+    expect(specs!.quantity).toBe(3)
+    expect(specs!.sla).toBe('Express')
+  })
+
+  test('should parse single-quoted keys and values', () => {
+    const specs = parseSpecsBlock("[SPECS] {'service_type': 'paberin_fabric_buba', 'quantity': 2} [/SPECS]")
+    expect(specs).toBeDefined()
+    expect(specs!.service_type).toBe('paberin_fabric_buba')
+    expect(specs!.quantity).toBe(2)
+  })
+
+  test('should parse mixed single-quoted keys and unquoted values', () => {
+    const specs = parseSpecsBlock("[SPECS] {'service_type': paberin_acrylic_sticks, 'quantity': 12} [/SPECS]")
+    expect(specs).toBeDefined()
+    expect(specs!.service_type).toBe('paberin_acrylic_sticks')
+    expect(specs!.quantity).toBe(12)
+  })
+
+  test('should still parse trailing commas with quoted keys', () => {
+    const specs = parseSpecsBlock('[SPECS] { "service_type": "paberin_fabric_buba", "quantity": 1, } [/SPECS]')
+    expect(specs).toBeDefined()
+    expect(specs!.service_type).toBe('paberin_fabric_buba')
+    expect(specs!.quantity).toBe(1)
+  })
+
+  test('should return undefined for garbage [SPECS] content without throwing', () => {
+    expect(() => parseSpecsBlock('[SPECS]not json[/SPECS]')).not.toThrow()
+    expect(parseSpecsBlock('[SPECS]not json[/SPECS]')).toBeUndefined()
+
+    expect(() => parseSpecsBlock('[SPECS][/SPECS]')).not.toThrow()
+    expect(parseSpecsBlock('[SPECS][/SPECS]')).toBeUndefined()
+
+    // Truncated JSON — the object never closes.
+    const truncated = '[SPECS] {"service_type": "paberin_fabric_buba", "quantity": 1 [/SPECS]'
+    expect(() => parseSpecsBlock(truncated)).not.toThrow()
+    expect(parseSpecsBlock(truncated)).toBeUndefined()
+  })
 })
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -419,6 +509,15 @@ describe('system prompt contract — the AI never prices', () => {
     expect(PABERIN_SYSTEM_PROMPT).toMatch(/quantity/i)
     expect(PABERIN_SYSTEM_PROMPT).toMatch(/delivery/i)
     expect(PABERIN_SYSTEM_PROMPT).toMatch(/clarifying questions/i)
+  })
+
+  test('prompt mandates responding in the customer language (never Chinese etc.)', () => {
+    // Bug 3: with lost context the model occasionally replied in Chinese.
+    // The prompt must pin the language explicitly.
+    expect(PABERIN_SYSTEM_PROMPT).toMatch(/respond in the customer.s language/i)
+    expect(PABERIN_SYSTEM_PROMPT).toMatch(/Nigerian English or Pidgin English/i)
+    expect(PABERIN_SYSTEM_PROMPT).toMatch(/never in any other language/i)
+    expect(PABERIN_SYSTEM_PROMPT).toMatch(/never switch to Chinese/i)
   })
 
   test('prompt covers the ambiguous-query patterns', () => {

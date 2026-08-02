@@ -89,6 +89,20 @@ function OrderPageInner() {
   const [uploadFiles, setUploadFiles] = useState<{ name: string; data: string }[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  /**
+   * Client-side phone check mirroring the admin's isValidPhone, so an
+   * invalid number (e.g. "123") is caught before the round trip instead of
+   * bouncing back from the server with INVALID_PHONE.
+   * Core rule: 7–15 DIGITS. Formatting (+, spaces, dashes) is tolerated so
+   * Nigerian formats like "+234 803 500 3068" pass.
+   */
+  const isValidPhone = (phone: string): boolean => {
+    const trimmed = phone.trim();
+    if (!/^\+?[0-9 -]{7,20}$/.test(trimmed)) return false;
+    const digits = trimmed.replace(/[^\d]/g, '');
+    return digits.length >= 7 && digits.length <= 15;
+  };
+
   // Custom job mode ("Something else" / chat handoff with no catalog match):
   // describe the job, we price it via rules or confirm pricing quickly.
   const [customMode, setCustomMode] = useState(false);
@@ -303,7 +317,7 @@ function OrderPageInner() {
     if (step === 4) {
       return (
         !!form.customerName.trim() &&
-        !!form.customerPhone.trim() &&
+        isValidPhone(form.customerPhone) &&
         !!form.customerEmail.trim() &&
         /^\S+@\S+\.\S+$/.test(form.customerEmail)
       );
@@ -314,7 +328,11 @@ function OrderPageInner() {
   const next = () => {
     setError(null);
     if (!canProceed()) {
-      setError('Please complete all required fields before continuing.');
+      setError(
+        step === 4 && !isValidPhone(form.customerPhone)
+          ? 'Please enter a valid phone number (7–15 digits, e.g. 0803 500 3068).'
+          : 'Please complete all required fields before continuing.'
+      );
       return;
     }
     setStep((s) => (Math.min(5, s + 1) as Step));
