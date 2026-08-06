@@ -41,10 +41,25 @@ export function OrderForm() {
     if (!customer?.phone) return;
     api
       .getSavedAddresses(customer.phone)
-      .then((data) => setSavedAddresses(data.addresses || []))
+      .then((data) => {
+        const list = data.addresses || [];
+        setSavedAddresses(list);
+        // Auto-fill the delivery address with the default (or most recent)
+        // saved address — only when the field is still empty.
+        const preferred = list.find((a) => a.isDefault) || list[0];
+        if (preferred) {
+          const joined = [preferred.address, preferred.city, preferred.state, preferred.landmark]
+            .filter(Boolean)
+            .join(', ');
+          setForm((prev) =>
+            prev.deliveryAddress.trim() ? prev : { ...prev, deliveryAddress: joined },
+          );
+        }
+      })
       .catch(() => {
         // Swallow — the picker just stays hidden/empty.
       });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customer?.phone]);
 
   const loadSavedAddress = (id: string) => {
