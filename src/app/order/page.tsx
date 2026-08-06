@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { AvailabilityLine } from '@/components/AvailabilityLine';
+import { AddressPicker } from '@/components/AddressPicker';
 import { usePaberinAuth } from '@/lib/auth';
 import {
   api,
@@ -229,6 +230,7 @@ function OrderPageInner() {
         quantity: form.quantity,
         sla: form.sla,
         deliveryMethod: form.deliveryMethod,
+        deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress.trim() || undefined : undefined,
         deliveryDistanceKm: form.deliveryMethod === 'LOCAL_DELIVERY' && form.deliveryAddress ? 10 : undefined,
         referralCode: form.referralCode || undefined,
         isFirstTimeCustomer: customer?.isNew || false,
@@ -284,19 +286,35 @@ function OrderPageInner() {
   const selectedService = services.find((s) => s.type === form.serviceType) || null;
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const selectedFiles = Array.from(e.target.files || []);
-    if (selectedFiles.length === 0) { setUploadFiles([]); return; }
-    if (selectedFiles.length > 5) { alert('Maximum 5 files allowed.'); return; }
+    const input = e.target;
+    const selectedFiles = Array.from(input.files || []);
+    // Picker cancelled — keep the files already selected.
+    if (selectedFiles.length === 0) return;
     const MAX_FILE_SIZE = 10 * 1024 * 1024;
-    const newFiles: { name: string; data: string }[] = [];
+    const okFiles = selectedFiles.filter((f) => f.size <= MAX_FILE_SIZE);
+    const skipped = selectedFiles.length - okFiles.length;
+    if (skipped > 0) alert(`${skipped} file${skipped > 1 ? 's' : ''} skipped — max 10MB each.`);
+    if (okFiles.length === 0) return;
+    if (uploadFiles.length + okFiles.length > 5) {
+      alert('Maximum 5 files allowed. Remove some before adding more.');
+      return;
+    }
+    // Read the new batch as base64, then APPEND it to the existing selection
+    // (previously this REPLACED the list, so adding files after the first
+    // pick lost earlier ones).
+    const pending = okFiles.length;
     let loaded = 0;
-    for (const file of selectedFiles) {
-      if (file.size > MAX_FILE_SIZE) { alert(`${file.name} exceeds 10MB limit.`); continue; }
+    const newFiles: { name: string; data: string }[] = [];
+    for (const file of okFiles) {
       const reader = new FileReader();
       reader.onload = () => {
         newFiles.push({ name: file.name, data: reader.result as string });
         loaded++;
-        if (loaded >= newFiles.length) setUploadFiles([...newFiles]);
+        if (loaded === pending) {
+          setUploadFiles((prev) => [...prev, ...newFiles]);
+          // Reset the input so the same file can be re-picked later.
+          input.value = '';
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -407,7 +425,8 @@ function OrderPageInner() {
             deliveryMethod: form.deliveryMethod,
             deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
             designFileUrl,
-            customerNotes: [form.customerNotes, uploadFiles.length > 0 ? `--- Design files: ${uploadFiles.map(f => f.name).join(', ')} ---` : ''].filter(Boolean).join('\n\n'),
+            // Customer notes contain ONLY the notes — file names travel in designFileUrl.
+            customerNotes: form.customerNotes.trim() || undefined,
             referralCode: form.referralCode || undefined,
             isFirstTimeCustomer: customer?.isNew || false,
           }
@@ -421,7 +440,7 @@ function OrderPageInner() {
             deliveryMethod: form.deliveryMethod,
             deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
             designFileUrl,
-            customerNotes: [form.customerNotes, uploadFiles.length > 0 ? `--- Design files: ${uploadFiles.map(f => f.name).join(', ')} ---` : ''].filter(Boolean).join('\n\n'),
+            customerNotes: form.customerNotes.trim() || undefined,
             referralCode: form.referralCode || undefined,
             isFirstTimeCustomer: customer?.isNew || false,
           });
@@ -972,14 +991,12 @@ function OrderPageInner() {
                   {form.deliveryMethod === 'LOCAL_DELIVERY' && (
                     <div className="space-y-2">
                       <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
-                        <span className="text-[#FF5C00]">01</span> Delivery Address
+                        <span className="text-[#FF5C00]">01</span> Delivery Address <span className="lowercase text-[10px]">(search or click the map)</span>
                       </label>
-                      <textarea
-                        rows={3}
+                      <AddressPicker
+                        token={process.env.NEXT_PUBLIC_MAPBOX_TOKEN || ''}
                         value={form.deliveryAddress}
-                        onChange={(e) => update('deliveryAddress', e.target.value)}
-                        placeholder="Full address — street, area, city, landmarks…"
-                        className="form-input resize-none"
+                        onChange={(v) => update('deliveryAddress', v)}
                       />
                     </div>
                   )}

@@ -44,6 +44,17 @@ const ESCALATION_STATUS_CLASS: Record<string, string> = {
 };
 
 /* ── Relative time formatter (e.g. "2 hours ago") for Recent Updates ── */
+/** Parse designFileUrl (JSON array from the order create flow; fallback = single URL). */
+function parseDesignFiles(raw: string): { url: string; name?: string; publicId?: string }[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    return [{ url: raw }];
+  } catch {
+    return [{ url: raw }];
+  }
+}
+
 function relativeTime(iso: string): string {
   if (!iso) return '';
   const then = new Date(iso).getTime();
@@ -1183,6 +1194,33 @@ function DashboardContent() {
                       <DetailItem k="Tracking PIN" v={detailData.trackingPin} />
                     )}
                   </div>
+
+                  {/* Design files uploaded with the order */}
+                  {(detailData?.designFileUrl || detailOrder.designFileUrl) && (
+                    <div className="rounded-lg border border-[#EAEAEA] bg-[#F7F7F7] p-5 mt-4">
+                      <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-4">
+                        Design Files
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        {parseDesignFiles(detailData?.designFileUrl || detailOrder.designFileUrl || '').map((f, i) => (
+                          <a
+                            key={i}
+                            href={f.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="rounded-lg border border-[#EAEAEA] bg-white p-4 flex flex-col gap-2 hover:border-[#FF5C00] transition-colors group"
+                          >
+                            <span className="text-xs font-semibold text-black break-all line-clamp-2">
+                              {f.name || `Design file ${i + 1}`}
+                            </span>
+                            <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#FF5C00] group-hover:underline">
+                              Open file ↗
+                            </span>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
 
                   {detailData?.state === 'QUOTING' && (
                     <div className="mt-6 bg-[#FFF7F0] border border-[#FFD9BF] rounded-lg p-4">

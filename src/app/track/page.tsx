@@ -14,6 +14,17 @@ import {
   type Order,
 } from '@/lib/api';
 
+/** Parse designFileUrl (JSON array from the order create flow; fallback = single URL). */
+function parseDesignFiles(raw: string): { url: string; name?: string; publicId?: string }[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed;
+    return [{ url: raw }];
+  } catch {
+    return [{ url: raw }];
+  }
+}
+
 /**
  * Order tracking page.
  *
@@ -236,6 +247,33 @@ function TrackInner() {
                     </div>
                   </div>
                 </div>
+
+                {/* Design files uploaded with the order */}
+                {order.designFileUrl && (
+                  <div className="card-premium card-premium-lg p-6 sm:p-7">
+                    <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-4">
+                      Design Files
+                    </p>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                      {parseDesignFiles(order.designFileUrl).map((f, i) => (
+                        <a
+                          key={i}
+                          href={f.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="rounded-lg border border-[#EAEAEA] bg-white p-4 flex flex-col gap-2 hover:border-[#FF5C00] transition-colors group"
+                        >
+                          <span className="text-xs font-semibold text-black break-all line-clamp-2">
+                            {f.name || `Design file ${i + 1}`}
+                          </span>
+                          <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#FF5C00] group-hover:underline">
+                            Open file ↗
+                          </span>
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {/* Timeline */}
                 {order.timeline && order.timeline.length > 0 && (

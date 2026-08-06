@@ -129,6 +129,7 @@ export interface Order {
   state: string;
   deliveryMethod: string | null;
   deliveryAddress: string | null;
+  designFileUrl?: string | null;
   createdAt: string;
   updatedAt: string;
   needsReview?: boolean;
