@@ -45,6 +45,17 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
 
 /* ───────────────────────────── Types ───────────────────────────── */
 
+export interface OptionField {
+  key: string;
+  label: string;
+  type: 'dropdown' | 'text' | 'textarea' | 'number';
+  choices?: string[];
+  required?: boolean;
+  min?: number;
+  max?: number;
+  maxLength?: number;
+}
+
 export interface Service {
   id: string;
   type: string;
@@ -59,6 +70,10 @@ export interface Service {
   expressLeadTime: string | null;
   allowExpress: boolean;
   expressSurchargePct: number;
+  /** Legacy flat option list (Django-style single dropdown). May be empty. */
+  options: string[];
+  /** Structured option fields rendered per type. Null when the service has none. */
+  optionFields: OptionField[] | null;
 }
 
 export interface QuoteBreakdown {

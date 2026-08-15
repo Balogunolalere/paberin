@@ -161,6 +161,8 @@ export interface ChatSpecs {
   delivery?: 'PICKUP' | 'LOCAL_DELIVERY';
   delivery_address?: string;
   needs_design_upload?: boolean;
+  /** Optional pickup time from the model; the route defaults it when absent. */
+  requested_pickup_time?: string;
 }
 
 /**
@@ -305,6 +307,12 @@ export function parseSpecsBlock(text: string): ChatSpecs | undefined {
   const delivery = deliveryRaw === 'LOCAL_DELIVERY' || deliveryRaw === 'PICKUP' ? (deliveryRaw as ChatSpecs['delivery']) : undefined;
   const slaRaw = typeof q.sla === 'string' ? q.sla.trim().toLowerCase() : '';
   const sla = slaRaw === 'express' ? ('Express' as const) : slaRaw === 'standard' ? ('Standard' as const) : undefined;
+  const rawPickupTime =
+    typeof q.requested_pickup_time === 'string' && q.requested_pickup_time.trim()
+      ? q.requested_pickup_time.trim()
+      : typeof q.requestedPickupTime === 'string' && q.requestedPickupTime.trim()
+        ? q.requestedPickupTime.trim()
+        : undefined;
 
   return {
     service_type: serviceType,
@@ -315,6 +323,7 @@ export function parseSpecsBlock(text: string): ChatSpecs | undefined {
     delivery,
     delivery_address: typeof q.delivery_address === 'string' ? q.delivery_address.trim().slice(0, 500) : undefined,
     needs_design_upload: q.needs_design_upload === true,
+    requested_pickup_time: rawPickupTime,
   };
 }
 

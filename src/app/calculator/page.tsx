@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { api, formatNaira, type Service, type QuoteBreakdown } from '@/lib/api';
+import { defaultRequestedPickupTime } from '@/lib/order-form';
 
 /**
  * Public price calculator.
@@ -90,6 +91,10 @@ export default function CalculatorPage() {
         serviceType,
         quantity: Math.max(1, quantity || 1),
         sla,
+        // The backend REQUIRES requestedPickupTime on every quote. The
+        // calculator has no date picker — use the standard default slot
+        // (now + 2 working days, 17:00 Lagos) so the estimate stays valid.
+        requestedPickupTime: defaultRequestedPickupTime(),
         ...buildDeliveryBody(delivery),
       });
       setBreakdown(res.breakdown || null);

@@ -43,6 +43,7 @@ import {
   PABERIN_SYSTEM_PROMPT,
   type ChatSpecs,
 } from '@/lib/chat';
+import { defaultRequestedPickupTime, isValidRequestedPickupTime } from '@/lib/order-form';
 
 // Agnes API configuration
 const AGNES_API_KEY = process.env.AGNES_API_KEY;
@@ -168,11 +169,19 @@ interface EngineQuoteResult {
  * Same endpoint the order form uses — one number everywhere.
  */
 async function callAdminQuote(specs: ChatSpecs, customerPhone?: string): Promise<EngineQuoteResult> {
+  // The engine REQUIRES requestedPickupTime (future, Mon–Fri, 09:00–18:00
+  // Lagos, ≤30 days). Chat specs rarely carry one, so default to now + 2
+  // working days at 17:00 Lagos — the standard pickup slot.
+  const requestedPickupTime =
+    specs.requested_pickup_time && isValidRequestedPickupTime(specs.requested_pickup_time)
+      ? specs.requested_pickup_time
+      : defaultRequestedPickupTime();
   const payload = {
     brand: 'PABERIN',
     serviceType: specs.service_type,
     quantity: specs.quantity,
     sla: specs.sla || 'Standard',
+    requestedPickupTime,
     deliveryMethod: specs.delivery,
     deliveryAddress: specs.delivery === 'LOCAL_DELIVERY' ? specs.delivery_address : undefined,
     ...(customerPhone ? { customerPhone } : {}),

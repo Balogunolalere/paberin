@@ -18,6 +18,20 @@ import {
 } from '@/lib/api';
 import { buildChatOrderNotes } from '@/lib/chat-order';
 import type { ChatSpecs } from '@/lib/chat';
+import {
+  buildQuotePayload,
+  buildOrderPayload,
+  isValidNigerianPhone,
+  isValidRequestedPickupTime,
+  pickupTimeError,
+  defaultRequestedPickupTime,
+  pickupTimeParts,
+  pickupTimeFromParts,
+  lagosDateISO,
+  formatPickupLabel,
+  optionInputModel,
+  validateOptionValues,
+} from '@/lib/order-form';
 
 /**
  * Paberin order form — 5-step wizard.
@@ -41,6 +55,12 @@ interface FormState {
   serviceName: string;
   quantity: number;
   sla: 'Standard' | 'Express';
+  /** REQUIRED by the backend (ISO) — future, Mon–Fri, 09:00–18:00 Lagos, ≤30 days. */
+  requestedPickupTime: string;
+  /** Legacy flat options list → single dropdown value (string). */
+  selectedVariant: string;
+  /** Structured optionFields values, keyed by field key. */
+  selectedOptions: Record<string, string | number>;
   customerNotes: string;
   deliveryMethod: 'PICKUP' | 'LOCAL_DELIVERY';
   deliveryAddress: string;
@@ -55,6 +75,9 @@ const initialState: FormState = {
   serviceName: '',
   quantity: 1,
   sla: 'Standard',
+  requestedPickupTime: '',
+  selectedVariant: '',
+  selectedOptions: {},
   customerNotes: '',
   deliveryMethod: 'PICKUP',
   deliveryAddress: '',
@@ -91,18 +114,14 @@ function OrderPageInner() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
-   * Client-side phone check mirroring the admin's isValidPhone, so an
-   * invalid number (e.g. "123") is caught before the round trip instead of
-   * bouncing back from the server with INVALID_PHONE.
-   * Core rule: 7–15 DIGITS. Formatting (+, spaces, dashes) is tolerated so
-   * Nigerian formats like "+234 803 500 3068" pass.
+   * Phone validation lives in @/lib/order-form (isValidNigerianPhone) so the
+   * widget and the unit tests share one implementation. The backend accepts
+   * ONLY Nigerian formats — 11 digits `0[789][01]XXXXXXXX` or 13 digits
+   * `234[789][01]XXXXXXXX` (leading +, spaces, dashes, parens tolerated).
+   * An invalid number (e.g. "123") is caught here instead of bouncing back
+   * from the server with INVALID_PHONE.
    */
-  const isValidPhone = (phone: string): boolean => {
-    const trimmed = phone.trim();
-    if (!/^\+?[0-9 -]{7,20}$/.test(trimmed)) return false;
-    const digits = trimmed.replace(/[^\d]/g, '');
-    return digits.length >= 7 && digits.length <= 15;
-  };
+  const isValidPhone = isValidNigerianPhone;
 
   // Custom job mode ("Something else" / chat handoff with no catalog match):
   // describe the job, we price it via rules or confirm pricing quickly.
@@ -122,6 +141,19 @@ function OrderPageInner() {
       }));
     }
   }, [customer]);
+
+  // Default pickup time — the backend REQUIRES requestedPickupTime on every
+  // quote/order. Prefill now + 2 working days at 17:00 Lagos (the same
+  // default the chat route uses) so the live quote works immediately and the
+  // customer only touches the picker when they want a different slot.
+  // Client-side only (effect) so the SSR markup stays hydration-clean.
+  useEffect(() => {
+    setForm((prev) =>
+      prev.requestedPickupTime
+        ? prev
+        : { ...prev, requestedPickupTime: defaultRequestedPickupTime() }
+    );
+  }, []);
 
   // Reorder prefill: when the dashboard sends ?service=…&qty=…, look up
   // the matching service, apply it + the quantity, and jump straight to
@@ -166,6 +198,11 @@ function OrderPageInner() {
     try {
       const specs = JSON.parse(specsRaw) as ChatSpecs;
       chatPrefillApplied.current = true;
+      // A valid pickup time given in chat wins over the default.
+      const pickupTime =
+        specs.requested_pickup_time && isValidRequestedPickupTime(specs.requested_pickup_time)
+          ? specs.requested_pickup_time
+          : undefined;
       if (specs.service_type) {
         const match = services.find((s) => s.type === specs.service_type);
         setForm((prev) => ({
@@ -177,6 +214,7 @@ function OrderPageInner() {
           deliveryMethod: specs.delivery === 'LOCAL_DELIVERY' ? 'LOCAL_DELIVERY' : 'PICKUP',
           deliveryAddress: specs.delivery_address || prev.deliveryAddress,
           customerNotes: buildChatOrderNotes(specs, searchParams.get('context')) || prev.customerNotes,
+          ...(pickupTime ? { requestedPickupTime: pickupTime } : {}),
         }));
       } else {
         setCustomMode(true);
@@ -187,6 +225,7 @@ function OrderPageInner() {
           ...prev,
           quantity: specs.quantity > 0 ? specs.quantity : 1,
           customerNotes: buildChatOrderNotes(specs, searchParams.get('context')) || prev.customerNotes,
+          ...(pickupTime ? { requestedPickupTime: pickupTime } : {}),
         }));
       }
       // Always jump to step 2 so they can review and adjust
@@ -220,37 +259,6 @@ function OrderPageInner() {
     };
   }, []);
 
-  // Live quote — refetch whenever inputs that affect price change
-  const fetchQuote = useCallback(async () => {
-    if (!form.serviceType || !form.quantity) return;
-    setQuoteLoading(true);
-    try {
-      const q = await api.getQuote({
-        serviceType: form.serviceType,
-        quantity: form.quantity,
-        sla: form.sla,
-        deliveryMethod: form.deliveryMethod,
-        deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress.trim() || undefined : undefined,
-        deliveryDistanceKm: form.deliveryMethod === 'LOCAL_DELIVERY' && form.deliveryAddress ? 10 : undefined,
-        referralCode: form.referralCode || undefined,
-        isFirstTimeCustomer: customer?.isNew || false,
-      });
-      setQuote(q);
-    } catch (err: any) {
-      // Quote failures shouldn't block navigation — just clear the quote
-      setQuote(null);
-    } finally {
-      setQuoteLoading(false);
-    }
-  }, [form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, customer?.isNew]);
-
-  useEffect(() => {
-    if (step >= 2 && form.serviceType) {
-      const t = setTimeout(fetchQuote, 350);
-      return () => clearTimeout(t);
-    }
-  }, [fetchQuote, step, form.serviceType]);
-
   // Validate referral code (debounced)
   useEffect(() => {
     if (!form.referralCode) {
@@ -276,14 +284,93 @@ function OrderPageInner() {
     setForm((prev) => ({ ...prev, [key]: value }));
   };
 
+  const updateOption = (key: string, value: string) => {
+    setForm((prev) => ({ ...prev, selectedOptions: { ...prev.selectedOptions, [key]: value } }));
+  };
+
   const selectService = (s: Service) => {
     update('serviceType', s.type);
     update('serviceName', s.label);
+    // Options are per-service — reset stale selections when switching.
+    setForm((prev) => ({ ...prev, selectedVariant: '', selectedOptions: {} }));
     setCustomMode(false);
     setStep(2);
   };
 
   const selectedService = services.find((s) => s.type === form.serviceType) || null;
+
+  // Structured option validation (required / min / max / maxLength / choices)
+  // and the pickup picker's date/time parts — both derived fresh each render.
+  const hasStructuredOptions = (selectedService?.optionFields?.length ?? 0) > 0;
+  // Legacy dropdown only applies when there are NO structured fields — the
+  // payload builders send selectedOptions whenever optionFields exist.
+  const hasLegacyOptions = (selectedService?.options?.length ?? 0) > 0 && !hasStructuredOptions;
+  const optionErrors = validateOptionValues(selectedService?.optionFields, form.selectedOptions);
+  const pickupParts = pickupTimeParts(form.requestedPickupTime);
+  const pickupErrorMsg = form.requestedPickupTime ? pickupTimeError(form.requestedPickupTime) : null;
+  const optionSummary: string[] = [];
+  if (!customMode) {
+    if (form.selectedVariant) optionSummary.push(form.selectedVariant);
+    for (const field of selectedService?.optionFields ?? []) {
+      const v = form.selectedOptions[field.key];
+      if (v !== undefined && v !== null && String(v).trim() !== '') {
+        optionSummary.push(`${field.label}: ${String(v).trim()}`);
+      }
+    }
+  }
+
+  // Live quote — refetch whenever inputs that affect price change.
+  // The backend REQUIRES requestedPickupTime and complete option fields, so
+  // we only call the engine when the form already satisfies the contract —
+  // otherwise the request would 400 (REQUESTED_PICKUP_REQUIRED etc.).
+  const fetchQuote = useCallback(async () => {
+    if (customMode) return; // custom jobs are priced by the team (QUOTING), not the engine
+    if (!form.serviceType || !form.quantity) return;
+    if (!isValidRequestedPickupTime(form.requestedPickupTime)) {
+      setQuote(null);
+      return;
+    }
+    if (hasStructuredOptions && !optionErrors.valid) {
+      setQuote(null); // don't keep showing the previous service's price
+      return;
+    }
+    if (hasLegacyOptions && !form.selectedVariant) {
+      setQuote(null);
+      return;
+    }
+    setQuoteLoading(true);
+    try {
+      const q = await api.getQuote(
+        buildQuotePayload({
+          service: selectedService,
+          serviceType: form.serviceType,
+          quantity: form.quantity,
+          sla: form.sla,
+          requestedPickupTime: form.requestedPickupTime,
+          selectedVariant: form.selectedVariant || undefined,
+          selectedOptions: form.selectedOptions,
+          deliveryMethod: form.deliveryMethod,
+          deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress.trim() || undefined : undefined,
+          deliveryDistanceKm: form.deliveryMethod === 'LOCAL_DELIVERY' && form.deliveryAddress ? 10 : undefined,
+          referralCode: form.referralCode || undefined,
+          isFirstTimeCustomer: customer?.isNew || false,
+        })
+      );
+      setQuote(q);
+    } catch (err: any) {
+      // Quote failures shouldn't block navigation — just clear the quote
+      setQuote(null);
+    } finally {
+      setQuoteLoading(false);
+    }
+  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, optionErrors.valid, customer?.isNew]);
+
+  useEffect(() => {
+    if (step >= 2 && form.serviceType) {
+      const t = setTimeout(fetchQuote, 350);
+      return () => clearTimeout(t);
+    }
+  }, [fetchQuote, step, form.serviceType]);
 
   const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const input = e.target;
@@ -323,6 +410,12 @@ function OrderPageInner() {
   const canProceed = (): boolean => {
     if (step === 1) return customMode || !!form.serviceType;
     if (step === 2) {
+      // Pickup time is REQUIRED by the backend (custom jobs included).
+      if (!isValidRequestedPickupTime(form.requestedPickupTime)) return false;
+      if (!customMode) {
+        if (hasStructuredOptions && !optionErrors.valid) return false;
+        if (hasLegacyOptions && !form.selectedVariant) return false;
+      }
       if (customMode) {
         return !!customDescription.trim() && form.quantity > 0;
       }
@@ -346,11 +439,17 @@ function OrderPageInner() {
   const next = () => {
     setError(null);
     if (!canProceed()) {
-      setError(
-        step === 4 && !isValidPhone(form.customerPhone)
-          ? 'Please enter a valid phone number (7–15 digits, e.g. 0803 500 3068).'
-          : 'Please complete all required fields before continuing.'
-      );
+      let message = 'Please complete all required fields before continuing.';
+      if (step === 2 && !isValidRequestedPickupTime(form.requestedPickupTime)) {
+        message = pickupTimeError(form.requestedPickupTime) || 'Please choose a valid pickup date & time.';
+      } else if (step === 2 && !customMode && hasStructuredOptions && !optionErrors.valid) {
+        message = 'Please complete all required options.';
+      } else if (step === 2 && !customMode && hasLegacyOptions && !form.selectedVariant) {
+        message = 'Please choose an option before continuing.';
+      } else if (step === 4 && !isValidPhone(form.customerPhone)) {
+        message = 'Please enter a valid Nigerian phone number (e.g. 0803 350 3068).';
+      }
+      setError(message);
       return;
     }
     setStep((s) => (Math.min(5, s + 1) as Step));
@@ -409,41 +508,35 @@ function OrderPageInner() {
         designFileUrl = JSON.stringify(uploadedFiles.map(f => ({ url: f.url, publicId: f.publicId, name: f.name })));
       }
 
-      const order = await api.createOrder(customMode
-        ? {
-            customSpec: {
-              description: customDescription.trim(),
-              material: customMaterial.trim() || undefined,
-              dimensions: customDimensions.trim() || undefined,
-              complexity: 'simple',
-            },
-            quantity: form.quantity,
-            sla: form.sla,
-            customerName: form.customerName,
-            customerPhone: form.customerPhone,
-            customerEmail: form.customerEmail,
-            deliveryMethod: form.deliveryMethod,
-            deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
-            designFileUrl,
-            // Customer notes contain ONLY the notes — file names travel in designFileUrl.
-            customerNotes: form.customerNotes.trim() || undefined,
-            referralCode: form.referralCode || undefined,
-            isFirstTimeCustomer: customer?.isNew || false,
-          }
-        : {
-            serviceType: form.serviceType,
-            quantity: form.quantity,
-            sla: form.sla,
-            customerName: form.customerName,
-            customerPhone: form.customerPhone,
-            customerEmail: form.customerEmail,
-            deliveryMethod: form.deliveryMethod,
-            deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
-            designFileUrl,
-            customerNotes: form.customerNotes.trim() || undefined,
-            referralCode: form.referralCode || undefined,
-            isFirstTimeCustomer: customer?.isNew || false,
-          });
+      const order = await api.createOrder(
+        buildOrderPayload({
+          service: selectedService,
+          serviceType: form.serviceType,
+          quantity: form.quantity,
+          sla: form.sla,
+          requestedPickupTime: form.requestedPickupTime,
+          selectedVariant: form.selectedVariant || undefined,
+          selectedOptions: form.selectedOptions,
+          customerName: form.customerName,
+          customerPhone: form.customerPhone,
+          customerEmail: form.customerEmail,
+          deliveryMethod: form.deliveryMethod,
+          deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
+          designFileUrl,
+          // Customer notes contain ONLY the notes — file names travel in designFileUrl.
+          customerNotes: form.customerNotes.trim() || undefined,
+          referralCode: form.referralCode || undefined,
+          isFirstTimeCustomer: customer?.isNew || false,
+          customSpec: customMode
+            ? {
+                description: customDescription.trim(),
+                material: customMaterial.trim() || undefined,
+                dimensions: customDimensions.trim() || undefined,
+                complexity: 'simple',
+              }
+            : undefined,
+        })
+      );
       setCreatedOrder(order);
       // Provisional QUOTING orders (unpriced custom jobs) skip payment until
       // the team confirms the price — the customer pays from the dashboard.
@@ -725,7 +818,20 @@ function OrderPageInner() {
 
                 {!customMode && (
                   <button
-                    onClick={() => { setCustomMode(true); setStep(2); }}
+                    onClick={() => {
+                      // Clear any catalog selection — a custom job is priced
+                      // by the team (QUOTING), never against a catalog service.
+                      setForm((prev) => ({
+                        ...prev,
+                        serviceType: '',
+                        serviceName: '',
+                        selectedVariant: '',
+                        selectedOptions: {},
+                      }));
+                      setQuote(null);
+                      setCustomMode(true);
+                      setStep(2);
+                    }}
                     className="card w-full text-left hover-lift transition-all border-dashed mt-3"
                   >
                     <div className="flex items-start justify-between">
@@ -884,10 +990,157 @@ function OrderPageInner() {
                     </div>
                   </div>
 
+                  {/* Options — structured optionFields OR legacy options dropdown */}
+                  {!customMode && selectedService?.optionFields && selectedService.optionFields.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                        <span className="text-[#FF5C00]">03</span> Options
+                      </label>
+                      <div className="space-y-4">
+                        {selectedService.optionFields.map((field) => {
+                          const model = optionInputModel(field);
+                          const raw = form.selectedOptions[field.key];
+                          const value = raw === undefined || raw === null ? '' : String(raw);
+                          const fieldError = optionErrors.errors[field.key];
+                          const fieldLabel = (
+                            <label className="text-xs font-medium text-black">
+                              {field.label}
+                              {field.required ? ' *' : ''}
+                            </label>
+                          );
+                          if (model.kind === 'select') {
+                            return (
+                              <div key={field.key} className="space-y-1">
+                                {fieldLabel}
+                                <select
+                                  value={value}
+                                  onChange={(e) => updateOption(field.key, e.target.value)}
+                                  className="form-input"
+                                >
+                                  <option value="">Select…</option>
+                                  {model.choices.map((c) => (
+                                    <option key={c} value={c}>
+                                      {c}
+                                    </option>
+                                  ))}
+                                </select>
+                                {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
+                              </div>
+                            );
+                          }
+                          if (model.kind === 'textarea') {
+                            return (
+                              <div key={field.key} className="space-y-1">
+                                {fieldLabel}
+                                <textarea
+                                  rows={3}
+                                  maxLength={model.maxLength}
+                                  value={value}
+                                  onChange={(e) => updateOption(field.key, e.target.value)}
+                                  className="form-input resize-none"
+                                />
+                                {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
+                              </div>
+                            );
+                          }
+                          if (model.kind === 'number') {
+                            return (
+                              <div key={field.key} className="space-y-1">
+                                {fieldLabel}
+                                <input
+                                  type="number"
+                                  min={model.min}
+                                  max={model.max}
+                                  value={value}
+                                  onChange={(e) => updateOption(field.key, e.target.value)}
+                                  className="form-input"
+                                />
+                                {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
+                              </div>
+                            );
+                          }
+                          return (
+                            <div key={field.key} className="space-y-1">
+                              {fieldLabel}
+                              <input
+                                type="text"
+                                maxLength={model.maxLength}
+                                value={value}
+                                onChange={(e) => updateOption(field.key, e.target.value)}
+                                className="form-input"
+                              />
+                              {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Legacy flat options list → single dropdown */}
+                  {!customMode &&
+                    (selectedService?.options?.length ?? 0) > 0 &&
+                    (selectedService?.optionFields?.length ?? 0) === 0 && (
+                      <div className="space-y-2">
+                        <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                          <span className="text-[#FF5C00]">03</span> Option
+                        </label>
+                        <select
+                          value={form.selectedVariant}
+                          onChange={(e) => update('selectedVariant', e.target.value)}
+                          className="form-input"
+                        >
+                          <option value="">Select an option…</option>
+                          {(selectedService?.options ?? []).map((o) => (
+                            <option key={o} value={o}>
+                              {o}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                  {/* Pickup date & time — REQUIRED by the backend */}
+                  <div className="space-y-2">
+                    <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                      <span className="text-[#FF5C00]">04</span> Pickup Date &amp; Time{' '}
+                      <span className="lowercase text-[10px]">(required)</span>
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <input
+                        type="date"
+                        value={pickupParts?.date ?? ''}
+                        min={lagosDateISO(0)}
+                        max={lagosDateISO(30)}
+                        onChange={(e) => {
+                          const iso = pickupTimeFromParts(e.target.value, pickupParts?.time || '17:00');
+                          if (iso) update('requestedPickupTime', iso);
+                        }}
+                        className="form-input"
+                      />
+                      <input
+                        type="time"
+                        value={pickupParts?.time ?? ''}
+                        min="09:00"
+                        max="18:00"
+                        onChange={(e) => {
+                          const iso = pickupTimeFromParts(pickupParts?.date ?? '', e.target.value);
+                          if (iso) update('requestedPickupTime', iso);
+                        }}
+                        className="form-input"
+                      />
+                    </div>
+                    {pickupErrorMsg && <p className="text-xs text-[#E05200]">{pickupErrorMsg}</p>}
+                    <p className="text-[11px] text-[#888888]">
+                      Monday–Friday only, 09:00–18:00 (Lagos), within 30 days. Earlier pickups
+                      add an express fee.
+                    </p>
+                  </div>
+
                   {/* Design files */}
                   <div className="space-y-2">
                     <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
-                      <span className="text-[#FF5C00]">03</span> Design Files <span className="lowercase text-[10px]">(up to 5, max 10MB each)</span>
+                      <span className="text-[#FF5C00]">05</span> Design Files <span className="lowercase text-[10px]">(up to 5, max 10MB each)</span>
                     </label>
                     <div className="flex flex-col gap-2">
                       <input
@@ -932,7 +1185,7 @@ function OrderPageInner() {
                   {/* Notes */}
                   <div className="space-y-2">
                     <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
-                      <span className="text-[#FF5C00]">04</span> Notes (optional)
+                      <span className="text-[#FF5C00]">06</span> Notes (optional)
                     </label>
                     <textarea
                       rows={3}
@@ -1107,7 +1360,15 @@ function OrderPageInner() {
                     )}
                     <p className="text-xs text-[#666666] mt-1">
                       Qty {form.quantity} · {form.sla}
+                      {form.requestedPickupTime && (
+                        <> · Pickup {formatPickupLabel(form.requestedPickupTime)}</>
+                      )}
                     </p>
+                    {optionSummary.length > 0 && (
+                      <p className="text-xs text-[#666666] mt-1">
+                        {optionSummary.join(' · ')}
+                      </p>
+                    )}
                   </div>
                   <div className="card">
                     <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">

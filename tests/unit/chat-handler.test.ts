@@ -14,6 +14,7 @@ import { describe, expect, test, vi, beforeAll, beforeEach } from 'vitest'
 import { NextResponse } from 'next/server'
 import type { ChatResponse } from '@/lib/api'
 import { clearChatCache } from '@/lib/chat-cache'
+import { isValidRequestedPickupTime, defaultRequestedPickupTime } from '@/lib/order-form'
 
 // Must be set BEFORE the route module is imported (env is read at module load)
 process.env.CHAT_MODE = 'live'
@@ -169,6 +170,71 @@ describe('POST /api/chat — happy path', () => {
     expect(body.render_order_now).toBe(true)
     expect(body.sessionId).toMatch(/^pab_/)
     expect(body.error).toBeUndefined()
+  })
+
+  test('should send a valid requestedPickupTime to the pricing engine', async () => {
+    // The backend now REQUIRES requestedPickupTime on POST /api/services/quote
+    // (400 REQUESTED_PICKUP_REQUIRED otherwise). Chat specs carry no pickup
+    // time, so the route must default one (now + 2 working days, 17:00 Lagos).
+    const content = `[SPECS]
+{"service_type":"paberin_topper_acrylic","quantity":1,"delivery":"PICKUP"}
+[/SPECS]`
+    let engineBody: Record<string, unknown> | null = null
+    mockFetch(
+      () => jsonResponse(agnesCompletion(content)),
+      (init) => {
+        engineBody = JSON.parse(String(init?.body))
+        return engineQuote(15000, 'paberin_topper_acrylic')
+      }
+    )
+
+    const { status, body } = await send(validBody)
+    expect(status).toBe(200)
+    expect(engineBody).not.toBeNull()
+    const enginePayload = engineBody as unknown as Record<string, unknown>
+    expect(typeof enginePayload.requestedPickupTime).toBe('string')
+    expect(isValidRequestedPickupTime(enginePayload.requestedPickupTime as string)).toBe(true)
+    expect(body.quote?.price).toBe(15000)
+  })
+
+  test('should pass through a valid requested_pickup_time from the specs', async () => {
+    const pickup = defaultRequestedPickupTime()
+    const content = `[SPECS]
+{"service_type":"paberin_topper_acrylic","quantity":1,"delivery":"PICKUP","requested_pickup_time":"${pickup}"}
+[/SPECS]`
+    let engineBody: Record<string, unknown> | null = null
+    mockFetch(
+      () => jsonResponse(agnesCompletion(content)),
+      (init) => {
+        engineBody = JSON.parse(String(init?.body))
+        return engineQuote(15000, 'paberin_topper_acrylic')
+      }
+    )
+
+    const { status } = await send(validBody)
+    expect(status).toBe(200)
+    const enginePayload = engineBody as unknown as Record<string, unknown>
+    expect(enginePayload.requestedPickupTime).toBe(pickup)
+  })
+
+  test('should fall back to the default when the spec pickup time is invalid', async () => {
+    const content = `[SPECS]
+{"service_type":"paberin_topper_acrylic","quantity":1,"delivery":"PICKUP","requested_pickup_time":"2020-01-01T12:00:00.000Z"}
+[/SPECS]`
+    let engineBody: Record<string, unknown> | null = null
+    mockFetch(
+      () => jsonResponse(agnesCompletion(content)),
+      (init) => {
+        engineBody = JSON.parse(String(init?.body))
+        return engineQuote(15000, 'paberin_topper_acrylic')
+      }
+    )
+
+    const { status } = await send(validBody)
+    expect(status).toBe(200)
+    const enginePayload = engineBody as unknown as Record<string, unknown>
+    expect(enginePayload.requestedPickupTime).not.toBe('2020-01-01T12:00:00.000Z')
+    expect(isValidRequestedPickupTime(enginePayload.requestedPickupTime as string)).toBe(true)
   })
 
   test('should not set render_order_now when no quote is produced', async () => {
