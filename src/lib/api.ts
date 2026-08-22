@@ -45,11 +45,14 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
 
 /* ───────────────────────────── Types ───────────────────────────── */
 
+/** A dropdown choice: plain string, or `{ value, image? }` where image is optional. */
+export type OptionChoice = string | { value: string; image?: string };
+
 export interface OptionField {
   key: string;
   label: string;
   type: 'dropdown' | 'text' | 'textarea' | 'number';
-  choices?: string[];
+  choices?: OptionChoice[];
   required?: boolean;
   min?: number;
   max?: number;

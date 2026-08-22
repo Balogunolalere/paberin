@@ -31,6 +31,7 @@ import {
   formatPickupLabel,
   optionInputModel,
   validateOptionValues,
+  hasChoiceImages,
 } from '@/lib/order-form';
 
 /**
@@ -363,7 +364,7 @@ function OrderPageInner() {
     } finally {
       setQuoteLoading(false);
     }
-  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, optionErrors.valid, customer?.isNew]);
+  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, hasStructuredOptions, hasLegacyOptions, optionErrors.valid, customer?.isNew]);
 
   useEffect(() => {
     if (step >= 2 && form.serviceType) {
@@ -1009,6 +1010,55 @@ function OrderPageInner() {
                             </label>
                           );
                           if (model.kind === 'select') {
+                            // Choice grid when any choice has an image — thumbnails
+                            // are only actually visible this way (a native <select>
+                            // can't show <img> in <option>). Plain select otherwise.
+                            if (hasChoiceImages(model.choices)) {
+                              return (
+                                <div key={field.key} className="space-y-2">
+                                  {fieldLabel}
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                    {model.choices.map((c) => {
+                                      const selected = value === c.value;
+                                      return (
+                                        <button
+                                          key={c.value}
+                                          type="button"
+                                          onClick={() => updateOption(field.key, c.value)}
+                                          aria-pressed={selected}
+                                          className={`card text-left transition-all flex flex-col items-center gap-2 p-2 sm:p-3 ${
+                                            selected
+                                              ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]'
+                                              : ''
+                                          }`}
+                                        >
+                                          {c.image ? (
+                                            /* eslint-disable-next-line @next/next/no-img-element -- choice images are arbitrary admin-hosted URLs; next/image remotePatterns can't enumerate them */
+                                            <img
+                                              src={c.image}
+                                              alt=""
+                                              loading="lazy"
+                                              referrerPolicy="no-referrer"
+                                              className="w-full aspect-square object-cover rounded-md border border-[#EAEAEA] bg-[#F7F7F7]"
+                                            />
+                                          ) : (
+                                            <div className="w-full aspect-square rounded-md border border-[#EAEAEA] bg-[#F7F7F7] flex items-center justify-center">
+                                              <span className="font-mono text-[10px] uppercase tracking-wider text-[#888888]">
+                                                —
+                                              </span>
+                                            </div>
+                                          )}
+                                          <span className="text-xs font-medium text-black text-center leading-tight">
+                                            {c.value}
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
+                                </div>
+                              );
+                            }
                             return (
                               <div key={field.key} className="space-y-1">
                                 {fieldLabel}
@@ -1019,8 +1069,8 @@ function OrderPageInner() {
                                 >
                                   <option value="">Select…</option>
                                   {model.choices.map((c) => (
-                                    <option key={c} value={c}>
-                                      {c}
+                                    <option key={c.value} value={c.value}>
+                                      {c.value}
                                     </option>
                                   ))}
                                 </select>

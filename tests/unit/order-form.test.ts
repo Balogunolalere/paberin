@@ -20,6 +20,8 @@ import {
   optionInputModel,
   validateOptionValues,
   normalizeOptionValues,
+  normalizeChoices,
+  hasChoiceImages,
   buildQuotePayload,
   buildOrderPayload,
 } from '@/lib/order-form'
@@ -179,8 +181,43 @@ describe('optionFields → input mapping', () => {
   test('dropdown maps to a <select> with its choices', () => {
     const model = optionInputModel(topperFields[0])
     expect(model.kind).toBe('select')
-    expect(model.choices).toEqual(['Gold', 'Silver', 'Rose Gold'])
+    expect(model.choices).toEqual([
+      { value: 'Gold' },
+      { value: 'Silver' },
+      { value: 'Rose Gold' },
+    ])
     expect(model.required).toBe(true)
+  })
+
+  test('dropdown with image choices renders Gold thumbnail and submits the string value', () => {
+    const field: OptionField = {
+      key: 'colour',
+      label: 'Colour',
+      type: 'dropdown',
+      choices: [{ value: 'Gold', image: 'https://x/g.png' }, 'Silver'],
+      required: true,
+    }
+    const model = optionInputModel(field)
+    // Gold carries its image (renders as a thumbnail in the choice grid),
+    // plain 'Silver' normalizes to { value: 'Silver' }
+    expect(model.choices[0]).toEqual({ value: 'Gold', image: 'https://x/g.png' })
+    expect(model.choices[1]).toEqual({ value: 'Silver' })
+    expect(hasChoiceImages(model.choices)).toBe(true)
+    expect(hasChoiceImages(optionInputModel(topperFields[0]).choices)).toBe(false)
+    // Selection still submits the plain string — the image never reaches the payload
+    expect(validateOptionValues([field], { colour: 'Gold' }).valid).toBe(true)
+    expect(validateOptionValues([field], { colour: 'Purple' }).valid).toBe(false)
+    expect(normalizeOptionValues([field], { colour: 'Gold' })).toEqual({ colour: 'Gold' })
+    expect(
+      buildQuotePayload({
+        service: { ...topperService, optionFields: [field] },
+        serviceType: 'paberin_topper_acrylic',
+        quantity: 1,
+        sla: 'Standard',
+        requestedPickupTime: PICKUP,
+        selectedOptions: { colour: 'Gold' },
+      }).selectedOptions
+    ).toEqual({ colour: 'Gold' })
   })
 
   test('text maps to a text input with maxLength', () => {

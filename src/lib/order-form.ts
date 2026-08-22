@@ -12,7 +12,7 @@
  *    structured `optionFields` → `selectedOptions` map. Never both keys.
  */
 
-import type { OptionField, Service } from '@/lib/api';
+import type { OptionField, OptionChoice, Service } from '@/lib/api';
 
 /* ───────────────────────────── Phone ───────────────────────────── */
 
@@ -142,12 +142,40 @@ export function formatPickupLabel(value: string): string {
 
 export type OptionInputKind = 'select' | 'text' | 'textarea' | 'number';
 
+/** Normalized dropdown choice — `choice.value` is what gets submitted. */
+export interface NormalizedOptionChoice {
+  value: string;
+  image?: string;
+}
+
+/**
+ * Normalize legacy string / `{ value, image? }` choices to one shape.
+ * Empty/void entries are dropped so they can't collide with the placeholder.
+ */
+export function normalizeChoices(choices?: OptionChoice[]): NormalizedOptionChoice[] {
+  if (!Array.isArray(choices)) return [];
+  const out: NormalizedOptionChoice[] = [];
+  for (const c of choices) {
+    if (typeof c === 'string') {
+      if (c) out.push({ value: c });
+    } else if (c && typeof c.value === 'string' && c.value) {
+      out.push({ value: c.value, image: c.image || undefined });
+    }
+  }
+  return out;
+}
+
+/** True when any normalized choice carries an image — render the choice grid. */
+export function hasChoiceImages(choices: NormalizedOptionChoice[]): boolean {
+  return choices.some((c) => !!c.image);
+}
+
 export interface OptionInputModel {
   key: string;
   label: string;
   kind: OptionInputKind;
   required: boolean;
-  choices: string[];
+  choices: NormalizedOptionChoice[];
   min?: number;
   max?: number;
   maxLength?: number;
@@ -160,7 +188,7 @@ export function optionInputModel(field: OptionField): OptionInputModel {
     label: field.label,
     kind: field.type === 'dropdown' ? 'select' : field.type,
     required: !!field.required,
-    choices: Array.isArray(field.choices) ? field.choices : [],
+    choices: normalizeChoices(field.choices),
     min: typeof field.min === 'number' ? field.min : undefined,
     max: typeof field.max === 'number' ? field.max : undefined,
     maxLength: typeof field.maxLength === 'number' ? field.maxLength : undefined,
@@ -182,6 +210,7 @@ export function validateOptionValues(
   for (const field of fields ?? []) {
     const raw = values?.[field.key];
     const text = raw === undefined || raw === null ? '' : String(raw).trim();
+    const choices = normalizeChoices(field.choices);
     if (field.required && !text) {
       errors[field.key] = `${field.label} is required`;
       continue;
@@ -197,12 +226,7 @@ export function validateOptionValues(
     } else {
       if (typeof field.maxLength === 'number' && text.length > field.maxLength) {
         errors[field.key] = `${field.label} must be at most ${field.maxLength} characters`;
-      } else if (
-        field.type === 'dropdown' &&
-        Array.isArray(field.choices) &&
-        field.choices.length > 0 &&
-        !field.choices.includes(text)
-      ) {
+      } else if (field.type === 'dropdown' && choices.length > 0 && !choices.some((c) => c.value === text)) {
         errors[field.key] = `${field.label} must be one of the listed options`;
       }
     }
