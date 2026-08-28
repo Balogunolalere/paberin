@@ -143,6 +143,8 @@ function LoginInner() {
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     placeholder="0803 500 3068"
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? 'login-error' : undefined}
                     className="form-input"
                   />
                   <p className="text-[11px] text-[#888888]">
@@ -151,7 +153,11 @@ function LoginInner() {
                 </div>
 
                 {error && (
-                  <div className="border border-[#FF5C00]/30 bg-[#FF5C00]/5 px-3 py-2 rounded text-sm text-[#E05200]">
+                  <div
+                    id="login-error"
+                    role="alert"
+                    className="border border-[#FF5C00]/30 bg-[#FF5C00]/5 px-3 py-2 rounded text-sm text-[#E05200]"
+                  >
                     {error}
                   </div>
                 )}
@@ -171,20 +177,40 @@ function LoginInner() {
                     email (optional) and head straight to the order form.
                   </p>
                   <form onSubmit={handleNewCustomer} className="space-y-4">
-                    <input
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="Your name"
-                      className="form-input"
-                    />
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="Email (optional)"
-                      className="form-input"
-                    />
+                    <div className="space-y-2">
+                      <label
+                        htmlFor="new-name"
+                        className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]"
+                      >
+                        Name <span className="text-[#888888] normal-case tracking-normal">(optional)</span>
+                      </label>
+                      <input
+                        id="new-name"
+                        type="text"
+                        autoComplete="name"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        placeholder="Your name"
+                        className="form-input"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label
+                        htmlFor="new-email"
+                        className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]"
+                      >
+                        Email <span className="text-[#888888] normal-case tracking-normal">(optional)</span>
+                      </label>
+                      <input
+                        id="new-email"
+                        type="email"
+                        autoComplete="email"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        placeholder="Email (optional)"
+                        className="form-input"
+                      />
+                    </div>
                     <button type="submit" className="btn-outline">
                       Continue as New Customer
                     </button>

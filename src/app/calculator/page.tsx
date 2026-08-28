@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { api, formatNaira, type Service, type QuoteBreakdown } from '@/lib/api';
 import { defaultRequestedPickupTime } from '@/lib/order-form';
+import { getBusinessCalendar } from '@/lib/business-calendar';
 
 /**
  * Public price calculator.
@@ -93,8 +94,9 @@ export default function CalculatorPage() {
         sla,
         // The backend REQUIRES requestedPickupTime on every quote. The
         // calculator has no date picker — use the standard default slot
-        // (now + 2 working days, 17:00 Lagos) so the estimate stays valid.
-        requestedPickupTime: defaultRequestedPickupTime(),
+        // (now + 2 working days, one hour before closing — 16:00 Lagos by
+        // default) within the CONFIGURED business calendar.
+        requestedPickupTime: defaultRequestedPickupTime(Date.now(), await getBusinessCalendar()),
         ...buildDeliveryBody(delivery),
       });
       setBreakdown(res.breakdown || null);

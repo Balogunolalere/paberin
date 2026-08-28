@@ -20,6 +20,10 @@ export function AnimatedGeometricBg() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
+    // Respect reduced motion: render one static frame instead of an
+    // infinite requestAnimationFrame loop of rotating wireframes.
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
     let animationId: number;
     let elapsed = 0;
 
@@ -39,6 +43,7 @@ export function AnimatedGeometricBg() {
         canvas.height = currentHeight;
         lastWidth = currentWidth;
         lastHeight = currentHeight;
+        if (reduceMotion) draw(performance.now());
       }
     };
 
@@ -141,10 +146,15 @@ export function AnimatedGeometricBg() {
 
       ctx!.restore();
 
-      animationId = requestAnimationFrame(draw);
+      if (!reduceMotion) animationId = requestAnimationFrame(draw);
     }
 
-    animationId = requestAnimationFrame(draw);
+    if (reduceMotion) {
+      // One static frame — a still backdrop, no motion.
+      draw(0);
+    } else {
+      animationId = requestAnimationFrame(draw);
+    }
 
     return () => {
       cancelAnimationFrame(animationId);

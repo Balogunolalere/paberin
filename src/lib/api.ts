@@ -375,7 +375,7 @@ export const api = {
       body: JSON.stringify({ customerPhone }),
     }),
 
-  /** Send a chat message to the Paberin AI assistant (Agnes 2.0 Flash via local route).
+  /** Send a chat message to the Paberin AI assistant (DeepSeek (deepseek-chat) via local route).
    *  Uses the local /api/chat endpoint which extracts structured [SPECS] and
    *  prices them with the admin pricing engine. The client-side timeout is a
    *  safety net so the UI can never hang if the server stalls. */

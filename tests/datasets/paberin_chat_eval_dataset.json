@@ -2,7 +2,7 @@
   "meta": {
     "generated_at": "2026-07-31T08:41:36.443948",
     "pipeline_version": "2.0",
-    "model_used": "agnes-2.0-flash",
+    "model_used": "deepseek-chat",
     "total_cases": 231,
     "with_ideal_responses": 217,
     "intent_distribution": {
@@ -13,7 +13,7 @@
       "material_inquiry": 10,
       "general_info": 8
     },
-    "source": "WhatsApp chat exports analyzed by Agnes 2.0 Flash",
+    "source": "WhatsApp chat exports analyzed by DeepSeek (deepseek-chat)",
     "brand": "Paberin",
     "pricing_note": "All amounts in ₦ Naira. NO VAT. Full payment before production.",
     "service_catalog_version": "June 2026"

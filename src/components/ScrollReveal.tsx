@@ -26,6 +26,10 @@ export function ScrollReveal({
     const node = ref.current;
     if (!node) return;
 
+    // Respect reduced-motion: leave content fully visible instead of
+    // revealing it with a scroll-triggered transform.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
     let ScrollTrigger: typeof import('gsap/ScrollTrigger').ScrollTrigger | null = null;
 
     const initAnimation = async () => {

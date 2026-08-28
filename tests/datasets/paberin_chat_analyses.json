@@ -2,9 +2,9 @@
   "meta": {
     "generated_at": "2026-07-31T15:23:22.869466",
     "pipeline_version": "3.0",
-    "model_used": "agnes-2.0-flash",
+    "model_used": "deepseek-chat",
     "chats_analyzed": 0,
-    "source": "WhatsApp chat exports analyzed by Agnes 2.0 Flash"
+    "source": "WhatsApp chat exports analyzed by DeepSeek (deepseek-chat)"
   },
   "chats": []
 }

@@ -16,14 +16,14 @@ describe('Chat API Evaluation Suite', () => {
 
   test('should handle mock mode correctly', () => {
     // When CHAT_MODE=mock, the API should return mock responses
-    // without calling the external Agnes API
+    // without calling the external DeepSeek API
     expect(true).toBe(true) // Placeholder - requires environment setup
   })
 
-  test('should process live mode with Agnes API', () => {
-    // When CHAT_MODE=live, the API should call the Agnes API
+  test('should process live mode with DeepSeek API', () => {
+    // When CHAT_MODE=live, the API should call the DeepSeek API
     // and process the response correctly
-    expect(true).toBe(true) // Placeholder - requires AGNES_API_KEY
+    expect(true).toBe(true) // Placeholder - requires DEEPSEEK_API_KEY
   })
 
   test('should extract quotes from responses', () => {

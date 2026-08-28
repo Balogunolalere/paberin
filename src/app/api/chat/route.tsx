@@ -1,10 +1,10 @@
 /**
  * Chat API Route — Paberin AI Assistant
  * =====================================
- * Powered by Agnes 2.0 Flash (512K context, tool calling).
+ * Powered by DeepSeek (deepseek-chat).
  *
  * ARCHITECTURE:
- *   Paberin frontend → POST /api/chat → Agnes 2.0 Flash → structured response
+ *   Paberin frontend → POST /api/chat → DeepSeek → structured response
  *
  * KEY FEATURES:
  *   - Rich system prompt with the complete service catalog (NO prices — the
@@ -44,10 +44,11 @@ import {
   type ChatSpecs,
 } from '@/lib/chat';
 import { defaultRequestedPickupTime, isValidRequestedPickupTime } from '@/lib/order-form';
+import { getBusinessCalendar } from '@/lib/business-calendar';
 
-// Agnes API configuration
-const AGNES_API_KEY = process.env.AGNES_API_KEY;
-const AGNES_API_URL = 'https://apihub.agnes-ai.com/v1/chat/completions';
+// DeepSeek API configuration (OpenAI-compatible)
+const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
+const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
 const CHAT_MODE = process.env.CHAT_MODE || 'live'; // 'live' or 'mock'
 const ADMIN_API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
 
@@ -63,17 +64,17 @@ const RATE_LIMIT_WINDOW = parseEnvInt('RATE_LIMIT_WINDOW', 60000); // 1min defau
 // timeout) don't re-hit the slow LLM and trip the platform's 504.
 import { chatCacheGet, chatCacheSet } from '@/lib/chat-cache';
 
-if (CHAT_MODE === 'live' && !AGNES_API_KEY) {
-  throw new Error('AGNES_API_KEY environment variable is required in live mode');
+if (CHAT_MODE === 'live' && !DEEPSEEK_API_KEY) {
+  throw new Error('DEEPSEEK_API_KEY environment variable is required in live mode');
 }
 
 
 // ═══════════════════════════════════════════════════════════════════════
 
 /**
- * Agnes 2.0 Flash model response
+ * DeepSeek chat model response (OpenAI-compatible)
  */
-interface AgnesChatResponse {
+interface DeepseekChatResponse {
   id: string;
   object: string;
   created: number;
@@ -87,7 +88,7 @@ interface AgnesChatResponse {
   usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-/** Error carrying an HTTP status from the Agnes API (used to decide retries). */
+/** Error carrying an HTTP status from the DeepSeek API (used to decide retries). */
 class HttpError extends Error {
   constructor(
     readonly status: number,
@@ -169,13 +170,14 @@ interface EngineQuoteResult {
  * Same endpoint the order form uses — one number everywhere.
  */
 async function callAdminQuote(specs: ChatSpecs, customerPhone?: string): Promise<EngineQuoteResult> {
-  // The engine REQUIRES requestedPickupTime (future, Mon–Fri, 09:00–18:00
-  // Lagos, ≤30 days). Chat specs rarely carry one, so default to now + 2
-  // working days at 17:00 Lagos — the standard pickup slot.
+  // The engine REQUIRES requestedPickupTime (future, working day Mon–Fri
+  // minus observed public holidays, within the configured hours, ≤30 days).
+  // Chat specs rarely carry one, so default to now + 2 working days at one
+  // hour before closing (16:00 Lagos by default) — the standard pickup slot.
   const requestedPickupTime =
     specs.requested_pickup_time && isValidRequestedPickupTime(specs.requested_pickup_time)
       ? specs.requested_pickup_time
-      : defaultRequestedPickupTime();
+      : defaultRequestedPickupTime(Date.now(), await getBusinessCalendar());
   const payload = {
     brand: 'PABERIN',
     serviceType: specs.service_type,
@@ -336,7 +338,7 @@ export async function POST(request: NextRequest) {
     // ── Mock mode (no API key needed) ──
     if (CHAT_MODE === 'mock') {
       const response: ChatResponse = {
-        assistant_text: `[MOCK MODE] I'd normally connect to Agnes 2.0 Flash to answer: "${message}". Set AGNES_API_KEY in .env.local and CHAT_MODE=live for real AI responses.`,
+        assistant_text: `[MOCK MODE] I'd normally connect to DeepSeek to answer: "${message}". Set DEEPSEEK_API_KEY in .env.local and CHAT_MODE=live for real AI responses.`,
         latency_ms: 5,
         quote: undefined,
         render_order_now: false,
@@ -346,12 +348,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(response);
     }
 
-    // ── Build messages for Agnes ──
+    // ── Build messages for DeepSeek ──
     // Thread the FULL sanitized conversation (user+assistant turns) so
     // follow-up messages keep their context. We use the client-supplied
     // `history` when present — context NEVER comes from sessionId alone
     // (sessionId is only echoed back and used for admin session saves).
-    const agnesMessages = [
+    const deepseekMessages = [
       {
         role: 'system' as const,
         content: PABERIN_SYSTEM_PROMPT,
@@ -362,9 +364,9 @@ export async function POST(request: NextRequest) {
 
     // ── Short response cache (TTL 60s) ──
     // Avoids re-hitting the LLM for identical questions — the most common
-    // cause of 504s is a slow Agnes call, and a retry of the same question
+    // cause of 504s is a slow DeepSeek call, and a retry of the same question
     // shouldn't have to wait for another one.
-    const cacheKey = agnesMessages.map((m) => `${m.role}:${m.content}`).join('|');
+    const cacheKey = deepseekMessages.map((m) => `${m.role}:${m.content}`).join('|');
     const cachedRaw = chatCacheGet(cacheKey);
     if (cachedRaw !== null) {
       const specs = parseSpecsBlock(cachedRaw);
@@ -403,14 +405,14 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // ── Call Agnes 2.0 Flash ──
+    // ── Call DeepSeek (deepseek-chat) ──
     // Each attempt gets its OWN AbortController + timeout: an aborted
     // controller stays aborted, so sharing one across retries would make
     // every retry after a timeout fail instantly (and the timeout must be
     // re-armed per attempt, not cleared after the first fetch).
     const fetchStartTime = performance.now();
 
-    const callAgnes = async (remainingBudgetMs: number): Promise<AgnesChatResponse> => {
+    const callDeepseek = async (remainingBudgetMs: number): Promise<DeepseekChatResponse> => {
       // Shrink the per-attempt timeout to fit the remaining total budget so a
       // single attempt can't burn 30s past the 60s cap. Floor at 500ms: if the
       // budget is nearly gone, the pre-attempt check in retryWithBackoff
@@ -419,15 +421,15 @@ export async function POST(request: NextRequest) {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), attemptTimeout);
       try {
-        const response = await fetch(AGNES_API_URL, {
+        const response = await fetch(DEEPSEEK_API_URL, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${AGNES_API_KEY}`,
+            Authorization: `Bearer ${DEEPSEEK_API_KEY}`,
           },
           body: JSON.stringify({
-            model: 'agnes-2.0-flash',
-            messages: agnesMessages,
+            model: 'deepseek-chat',
+            messages: deepseekMessages,
             temperature: 0.5, // Balanced: creative enough for natural chat, deterministic enough for quotes
             max_tokens: 4096, // Room for long answers + the [SPECS] block without mid-block truncation
           }),
@@ -441,29 +443,29 @@ export async function POST(request: NextRequest) {
 
           // Classify errors for better debugging
           if (status === 401 || status === 403) {
-            throw new Error(`Agnes API authentication error (${status}). Check AGNES_API_KEY.`);
+            throw new Error(`DeepSeek API authentication error (${status}). Check DEEPSEEK_API_KEY.`);
           }
           if (RETRYABLE_STATUS.has(status)) {
             throw new HttpError(
               status,
               status === 429
-                ? `Agnes API rate limit exceeded (429). Try again in a few seconds.`
-                : `Agnes API server error (${status}). The model may be temporarily unavailable.`
+                ? `DeepSeek API rate limit exceeded (429). Try again in a few seconds.`
+                : `DeepSeek API server error (${status}). The model may be temporarily unavailable.`
             );
           }
 
-          throw new Error(`Agnes API error: ${status} - ${errorText.substring(0, 200)}`);
+          throw new Error(`DeepSeek API error: ${status} - ${errorText.substring(0, 200)}`);
         }
 
-        return (await response.json()) as AgnesChatResponse;
+        return (await response.json()) as DeepseekChatResponse;
       } finally {
         clearTimeout(timeoutId);
       }
     };
 
-    let data: AgnesChatResponse;
+    let data: DeepseekChatResponse;
     try {
-      data = await retryWithBackoff(callAgnes, {
+      data = await retryWithBackoff(callDeepseek, {
         maxRetries: MAX_RETRIES,
         baseDelay: RETRY_BASE_DELAY,
         budgetMs: TOTAL_BUDGET_MS,
@@ -471,7 +473,7 @@ export async function POST(request: NextRequest) {
       });
     } catch (error: any) {
       if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
-        throw new Error(`Agnes API request timed out after ${FETCH_TIMEOUT}ms`);
+        throw new Error(`DeepSeek API request timed out after ${FETCH_TIMEOUT}ms`);
       }
       throw error;
     }
@@ -574,7 +576,7 @@ export async function POST(request: NextRequest) {
 export const runtime = 'nodejs';
 
 // Vercel function duration: Node runtime + maxDuration is required because
-// the Agnes call can take 20-45s and Edge functions get killed at ~30s
+// the DeepSeek call can take 20-45s and Edge functions get killed at ~30s
 // (which surfaced as 504s). Hobby allows 60s; on Pro you can raise this to
 // 300 if you also bump TOTAL_TIMEOUT.
 export const maxDuration = 60;

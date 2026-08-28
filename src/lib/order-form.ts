@@ -5,14 +5,26 @@
  * Mirrors the admin backend's server-enforced rules so invalid payloads are
  * caught client-side before the round trip:
  *  - `requestedPickupTime` is REQUIRED on quote + order create (ISO string,
- *    future, Mon–Fri, 09:00–18:00 Africa/Lagos, at most 30 days ahead).
+ *    future, working day Mon–Fri minus observed public holidays, within the
+ *    configured opening hours [default 08:00–17:00), Africa/Lagos, at most 30
+ *    days ahead — closing time is EXCLUSIVE).
  *  - Nigerian phone numbers only: 11-digit `0[789][01]XXXXXXXX` or 13-digit
  *    `234[789][01]XXXXXXXX` (leading `+` and spaces/dashes/parens tolerated).
  *  - Service options: legacy flat `options` list → `selectedVariant` string;
  *    structured `optionFields` → `selectedOptions` map. Never both keys.
+ *
+ * The business calendar (configurable on the admin Settings page) is loaded
+ * via `getBusinessCalendar()`; rules take an optional `calendar` argument and
+ * default to the shop's real schedule (08:00–17:00 Mon–Fri, no holidays).
  */
 
 import type { OptionField, OptionChoice, Service } from '@/lib/api';
+import {
+  type BusinessCalendar,
+  DEFAULT_BUSINESS_CALENDAR,
+  fmtClock,
+  isWorkingDayCal,
+} from '@/lib/business-calendar';
 
 /* ───────────────────────────── Phone ───────────────────────────── */
 
@@ -44,16 +56,23 @@ const pad2 = (n: number) => String(n).padStart(2, '0');
  * Server-enforced pickup rules, mirrored client-side. Returns a
  * human-readable problem or null when the time is acceptable.
  */
-export function pickupTimeError(value: string, nowMs: number = Date.now()): string | null {
+export function pickupTimeError(
+  value: string,
+  nowMs: number = Date.now(),
+  cal: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR,
+): string | null {
   const t = Date.parse(value);
   if (!value) return 'Pickup date & time is required';
   if (Number.isNaN(t)) return 'Pickup date & time is invalid';
   if (t <= nowMs) return 'Pickup must be in the future';
+  if (!isWorkingDayCal(t, cal)) {
+    return 'Pickup is a working day only (Mon–Fri, not an observed public holiday)';
+  }
   const wall = lagosWallTime(t);
-  const dow = wall.getUTCDay();
-  if (dow === 0 || dow === 6) return 'Pickup is Monday–Friday only';
   const minutes = wall.getUTCHours() * 60 + wall.getUTCMinutes();
-  if (minutes < 9 * 60 || minutes > 18 * 60) return 'Pickup hours are 09:00–18:00 (Africa/Lagos)';
+  if (minutes < cal.openMinute || minutes >= cal.closeMinute) {
+    return `Pickup hours are ${fmtClock(cal.openMinute)}–${fmtClock(cal.closeMinute)} (Africa/Lagos)`;
+  }
   const nowWall = lagosWallTime(nowMs);
   const todayStart = Date.UTC(nowWall.getUTCFullYear(), nowWall.getUTCMonth(), nowWall.getUTCDate());
   const pickupDay = Date.UTC(wall.getUTCFullYear(), wall.getUTCMonth(), wall.getUTCDate());
@@ -61,21 +80,31 @@ export function pickupTimeError(value: string, nowMs: number = Date.now()): stri
   return null;
 }
 
-export function isValidRequestedPickupTime(value: string, nowMs?: number): boolean {
-  return pickupTimeError(value, nowMs) === null;
+export function isValidRequestedPickupTime(
+  value: string,
+  nowMs?: number,
+  cal: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR,
+): boolean {
+  return pickupTimeError(value, nowMs, cal) === null;
 }
 
-/** now + 2 working days at 17:00 Lagos — the default the chat route uses. */
-export function defaultRequestedPickupTime(nowMs: number = Date.now()): string {
+/** now + 2 working days at one hour before closing (16:00 by default) —
+ *  respects observed public holidays and customized hours. */
+export function defaultRequestedPickupTime(
+  nowMs: number = Date.now(),
+  cal: BusinessCalendar = DEFAULT_BUSINESS_CALENDAR,
+): string {
   const wall = lagosWallTime(nowMs);
   let day = Date.UTC(wall.getUTCFullYear(), wall.getUTCMonth(), wall.getUTCDate());
   let workingDays = 0;
   while (workingDays < 2) {
     day += 86_400_000;
-    const dow = new Date(day).getUTCDay();
-    if (dow !== 0 && dow !== 6) workingDays++;
+    const dw = new Date(day);
+    const key = `${dw.getUTCFullYear()}-${String(dw.getUTCMonth() + 1).padStart(2, '0')}-${String(dw.getUTCDate()).padStart(2, '0')}`;
+    if (cal.workingDays.includes(dw.getUTCDay()) && !cal.holidays.has(key)) workingDays++;
   }
-  return new Date(day + 17 * 3_600_000 - LAGOS_OFFSET_MS).toISOString();
+  const minutes = Math.max(cal.openMinute, cal.closeMinute - 60);
+  return new Date(day + minutes * 60_000 - LAGOS_OFFSET_MS).toISOString();
 }
 
 /** Split an ISO pickup time into its Lagos-local date (YYYY-MM-DD) and time (HH:MM). */

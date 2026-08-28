@@ -2,7 +2,7 @@
  * Handler-level tests for POST /api/chat.
  *
  * These exercise the real route handler (src/app/api/chat/route.tsx) with a
- * mocked Agnes API. They cover the behaviors the pure-function unit tests
+ * mocked DeepSeek API. They cover the behaviors the pure-function unit tests
  * can't: validation status codes, injection via history, retry semantics,
  * and error classification.
  *
@@ -18,21 +18,21 @@ import { isValidRequestedPickupTime, defaultRequestedPickupTime } from '@/lib/or
 
 // Must be set BEFORE the route module is imported (env is read at module load)
 process.env.CHAT_MODE = 'live'
-process.env.AGNES_API_KEY = 'test-key'
+process.env.DEEPSEEK_API_KEY = 'test-key'
 process.env.RETRY_BASE_DELAY = '1'
 process.env.TOTAL_TIMEOUT = '5000'
 process.env.FETCH_TIMEOUT = '1000'
 
 let POST: typeof import('@/app/api/chat/route').POST
 
-const AGNES_URL = 'https://apihub.agnes-ai.com/v1/chat/completions'
+const DEEPSEEK_URL = 'https://api.deepseek.com/v1/chat/completions'
 
-function agnesCompletion(content: string) {
+function deepseekCompletion(content: string) {
   return {
     id: 'chatcmpl-test',
     object: 'chat.completion',
     created: 1,
-    model: 'agnes-2.0-flash',
+    model: 'deepseek-chat',
     choices: [{ index: 0, message: { role: 'assistant', content, finish_reason: 'stop' } }],
     usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
   }
@@ -42,14 +42,14 @@ function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 }
 
-/** Mock global fetch: Agnes calls get `agnesHandler`, the admin pricing engine
+/** Mock global fetch: DeepSeek calls get `deepseekHandler`, the admin pricing engine
  *  (`/api/services/quote`) gets `engineHandler`, everything else (admin save) gets 200. */
 function mockFetch(
-  agnesHandler: (init?: RequestInit) => Response | Promise<Response>,
+  deepseekHandler: (init?: RequestInit) => Response | Promise<Response>,
   engineHandler?: (init?: RequestInit) => Response | Promise<Response>
 ) {
   ;(fetch as any).mockImplementation((url: string, init?: RequestInit) => {
-    if (url.includes('apihub.agnes-ai.com')) return Promise.resolve(agnesHandler(init))
+    if (url.includes('api.deepseek.com')) return Promise.resolve(deepseekHandler(init))
     if (url.includes('/api/services/quote')) {
       if (!engineHandler) throw new Error('mockFetch: engine call not expected in this test')
       return Promise.resolve(engineHandler(init))
@@ -137,7 +137,7 @@ describe('POST /api/chat — validation', () => {
   })
 
   test('should accept legitimate messages', async () => {
-    mockFetch(() => jsonResponse(agnesCompletion('A full buba costs ₦35,000.')))
+    mockFetch(() => jsonResponse(deepseekCompletion('A full buba costs ₦35,000.')))
     const { status, body } = await send(validBody)
     expect(status).toBe(200)
     expect(body.assistant_text).toContain('₦35,000')
@@ -156,7 +156,7 @@ describe('POST /api/chat — happy path', () => {
 }
 [/SPECS]`
     mockFetch(
-      () => jsonResponse(agnesCompletion(content)),
+      () => jsonResponse(deepseekCompletion(content)),
       () => engineQuote(105000, 'paberin_fabric_buba')
     )
 
@@ -181,7 +181,7 @@ describe('POST /api/chat — happy path', () => {
 [/SPECS]`
     let engineBody: Record<string, unknown> | null = null
     mockFetch(
-      () => jsonResponse(agnesCompletion(content)),
+      () => jsonResponse(deepseekCompletion(content)),
       (init) => {
         engineBody = JSON.parse(String(init?.body))
         return engineQuote(15000, 'paberin_topper_acrylic')
@@ -204,7 +204,7 @@ describe('POST /api/chat — happy path', () => {
 [/SPECS]`
     let engineBody: Record<string, unknown> | null = null
     mockFetch(
-      () => jsonResponse(agnesCompletion(content)),
+      () => jsonResponse(deepseekCompletion(content)),
       (init) => {
         engineBody = JSON.parse(String(init?.body))
         return engineQuote(15000, 'paberin_topper_acrylic')
@@ -223,7 +223,7 @@ describe('POST /api/chat — happy path', () => {
 [/SPECS]`
     let engineBody: Record<string, unknown> | null = null
     mockFetch(
-      () => jsonResponse(agnesCompletion(content)),
+      () => jsonResponse(deepseekCompletion(content)),
       (init) => {
         engineBody = JSON.parse(String(init?.body))
         return engineQuote(15000, 'paberin_topper_acrylic')
@@ -238,27 +238,27 @@ describe('POST /api/chat — happy path', () => {
   })
 
   test('should not set render_order_now when no quote is produced', async () => {
-    mockFetch(() => jsonResponse(agnesCompletion('What material are you cutting? Fabric, wood, or acrylic?')))
+    mockFetch(() => jsonResponse(deepseekCompletion('What material are you cutting? Fabric, wood, or acrylic?')))
     const { body } = await send(validBody)
     expect(body.quote).toBeUndefined()
     expect(body.render_order_now).toBe(false)
   })
 
   test('should reuse the incoming session ID', async () => {
-    mockFetch(() => jsonResponse(agnesCompletion('Sure!')))
+    mockFetch(() => jsonResponse(deepseekCompletion('Sure!')))
     const { body } = await send({ ...validBody, sessionId: 'pab_existing_123' })
     expect(body.sessionId).toBe('pab_existing_123')
   })
 })
 
-describe('POST /api/chat — Agnes failure handling', () => {
+describe('POST /api/chat — DeepSeek failure handling', () => {
   test('should retry transient 5xx errors and succeed on the second attempt', async () => {
     let calls = 0
     mockFetch(
       () => {
         calls++
         if (calls === 1) return jsonResponse({ error: 'upstream boom' }, 503)
-        return jsonResponse(agnesCompletion(`Your custom sheet cutting:
+        return jsonResponse(deepseekCompletion(`Your custom sheet cutting:
 [SPECS]
 {"service_type":"paberin_sheet_custom","quantity":1,"delivery":"PICKUP"}
 [/SPECS]`))
@@ -272,13 +272,13 @@ describe('POST /api/chat — Agnes failure handling', () => {
     expect(body.quote?.price).toBe(20000)
   })
 
-  test('should retry 429 rate-limit errors from Agnes', async () => {
+  test('should retry 429 rate-limit errors from DeepSeek', async () => {
     let calls = 0
     mockFetch(
       () => {
         calls++
         if (calls === 1) return jsonResponse({ error: 'rate limited' }, 429)
-        return jsonResponse(agnesCompletion(`Wood engraving:
+        return jsonResponse(deepseekCompletion(`Wood engraving:
 [SPECS]
 {"service_type":"paberin_engraving_wood","quantity":1,"delivery":"PICKUP"}
 [/SPECS]`))

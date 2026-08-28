@@ -62,6 +62,35 @@
   }
 }
 
+/* ─── Reduced motion (WCAG 2.3.3) ───
+   Users who opt out of motion get near-instant animation/transition
+   durations, infinite loops resolved, and native scrolling restored.
+   ScrollReveal / Lenis / the canvas handle the JS-driven motion too. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Elements that rely on an infinite animation for their effect: freeze them. */
+  .marquee-track,
+  .craft-icon-pulse,
+  .animate-blink,
+  .animate-spin,
+  .animate-fade-in,
+  .animate-slide-up {
+    animation: none !important;
+  }
+
+  .marquee-track:hover {
+    animation-play-state: paused;
+  }
+}
+
 @layer components {
   /* ===== Buttons ===== */
   .btn-primary {

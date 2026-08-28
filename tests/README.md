@@ -44,7 +44,7 @@ pnpm test tests/integration/payment-flow.test.ts
 
 Required for tests:
 - `NEXT_PUBLIC_ADMIN_API_URL` - URL of the admin backend (default: `http://localhost:3000`)
-- `AGNES_API_KEY` - For chat API tests (can be mock)
+- `DEEPSEEK_API_KEY` - For chat API tests (can be mock)
 
 ## Key Test Scenarios
 

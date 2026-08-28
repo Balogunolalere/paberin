@@ -25,6 +25,7 @@ import {
   buildQuotePayload,
   buildOrderPayload,
 } from '@/lib/order-form'
+import { DEFAULT_BUSINESS_CALENDAR } from '@/lib/business-calendar'
 import type { OptionField, Service } from '@/lib/api'
 
 /* ───────────────────────────── Phone ───────────────────────────── */
@@ -90,23 +91,27 @@ describe('pickupTimeError / isValidRequestedPickupTime', () => {
     expect(pickupTimeError('2026-08-05T09:00:00Z', NOW)).toContain('future')
   })
 
-  test('rejects weekends', () => {
-    expect(pickupTimeError('2026-08-08T16:00:00Z', NOW)).toContain('Monday–Friday') // Sat
-    expect(pickupTimeError('2026-08-09T16:00:00Z', NOW)).toContain('Monday–Friday') // Sun
+  test('rejects weekends and observed public holidays', () => {
+    expect(pickupTimeError('2026-08-08T16:00:00Z', NOW)).toMatch(/Mon–Fri|working day/) // Sat
+    expect(pickupTimeError('2026-08-09T16:00:00Z', NOW)).toMatch(/Mon–Fri|working day/) // Sun
+    const holidayCal = { ...DEFAULT_BUSINESS_CALENDAR, holidays: new Set(['2026-08-06']) }; // Thu holiday
+    expect(pickupTimeError('2026-08-06T12:00:00Z', NOW, holidayCal)).toMatch(/holiday|working day/)
+    expect(pickupTimeError('2026-08-07T12:00:00Z', NOW, holidayCal)).toBeNull()
   })
 
-  test('enforces 09:00–18:00 Lagos', () => {
-    expect(pickupTimeError('2026-08-06T07:59:00Z', NOW)).toContain('09:00–18:00') // 08:59 Lagos
-    expect(pickupTimeError('2026-08-06T17:01:00Z', NOW)).toContain('09:00–18:00') // 18:01 Lagos
-    expect(pickupTimeError('2026-08-06T08:00:00Z', NOW)).toBeNull() // 09:00 Lagos
-    expect(pickupTimeError('2026-08-06T17:00:00Z', NOW)).toBeNull() // 18:00 Lagos
+  test('enforces the configured opening hours (08:00–17:00, closing exclusive)', () => {
+    expect(pickupTimeError('2026-08-06T06:59:00Z', NOW)).toContain('08:00–17:00') // 07:59 Lagos
+    expect(pickupTimeError('2026-08-06T16:01:00Z', NOW)).toContain('08:00–17:00') // 17:01 Lagos
+    expect(pickupTimeError('2026-08-06T07:00:00Z', NOW)).toBeNull() // 08:00 Lagos = opening
+    expect(pickupTimeError('2026-08-06T15:59:00Z', NOW)).toBeNull() // 16:59 Lagos = last minute
+    expect(pickupTimeError('2026-08-06T16:00:00Z', NOW)).toContain('08:00–17:00') // 17:00 Lagos = closing, rejected
   })
 
   test('enforces the 30-day horizon', () => {
-    // Wed Aug 5 + 30 = Fri Sep 4 — the last valid day
-    expect(pickupTimeError('2026-09-04T16:00:00Z', NOW)).toBeNull()
+    // Wed Aug 5 + 30 = Fri Sep 4 — the last valid day (16:59 Lagos)
+    expect(pickupTimeError('2026-09-04T15:59:00Z', NOW)).toBeNull()
     // Mon Sep 7 is 33 days out
-    expect(pickupTimeError('2026-09-07T16:00:00Z', NOW)).toContain('30 days')
+    expect(pickupTimeError('2026-09-07T15:59:00Z', NOW)).toContain('30 days')
   })
 
   test('allows a same-day future slot', () => {
@@ -115,28 +120,41 @@ describe('pickupTimeError / isValidRequestedPickupTime', () => {
 
   test('isValidRequestedPickupTime mirrors pickupTimeError', () => {
     expect(isValidRequestedPickupTime('2026-08-08T16:00:00Z', NOW)).toBe(false)
-    expect(isValidRequestedPickupTime('2026-08-06T16:00:00Z', NOW)).toBe(true)
+    expect(isValidRequestedPickupTime('2026-08-06T15:30:00Z', NOW)).toBe(true)
   })
 })
 
 describe('defaultRequestedPickupTime', () => {
-  test('now + 2 working days at 17:00 Lagos', () => {
-    // Wed 11:00 Lagos → Thu (1), Fri (2) → Fri Aug 7 17:00 Lagos = 16:00Z
-    expect(defaultRequestedPickupTime(NOW)).toBe('2026-08-07T16:00:00.000Z')
+  test('now + 2 working days at 16:00 Lagos (one hour before closing)', () => {
+    // Wed 11:00 Lagos → Thu (1), Fri (2) → Fri Aug 7 16:00 Lagos = 15:00Z
+    expect(defaultRequestedPickupTime(NOW)).toBe('2026-08-07T15:00:00.000Z')
   })
 
   test('skips the weekend from Friday', () => {
     // Fri 2026-08-07 13:00 Lagos → Mon (1), Tue (2) → Tue Aug 11
-    expect(defaultRequestedPickupTime(Date.parse('2026-08-07T12:00:00Z'))).toBe('2026-08-11T16:00:00.000Z')
+    expect(defaultRequestedPickupTime(Date.parse('2026-08-07T12:00:00Z'))).toBe('2026-08-11T15:00:00.000Z')
   })
 
   test('skips the weekend from Saturday and Sunday', () => {
-    expect(defaultRequestedPickupTime(Date.parse('2026-08-08T12:00:00Z'))).toBe('2026-08-11T16:00:00.000Z')
-    expect(defaultRequestedPickupTime(Date.parse('2026-08-09T12:00:00Z'))).toBe('2026-08-11T16:00:00.000Z')
+    expect(defaultRequestedPickupTime(Date.parse('2026-08-08T12:00:00Z'))).toBe('2026-08-11T15:00:00.000Z')
+    expect(defaultRequestedPickupTime(Date.parse('2026-08-09T12:00:00Z'))).toBe('2026-08-11T15:00:00.000Z')
   })
 
   test('lands on Wednesday from Monday', () => {
-    expect(defaultRequestedPickupTime(Date.parse('2026-08-10T12:00:00Z'))).toBe('2026-08-12T16:00:00.000Z')
+    expect(defaultRequestedPickupTime(Date.parse('2026-08-10T12:00:00Z'))).toBe('2026-08-12T15:00:00.000Z')
+  })
+
+  test('skips observed public holidays', () => {
+    const holidayCal = { ...DEFAULT_BUSINESS_CALENDAR, holidays: new Set(['2026-08-11']) }; // Tue holiday
+    // Fri Aug 7 → Mon Aug 10 (1), Tue Aug 11 holiday skipped → Wed (2)
+    expect(defaultRequestedPickupTime(Date.parse('2026-08-07T12:00:00Z'), holidayCal)).toBe('2026-08-12T15:00:00.000Z')
+  })
+
+  test('respects customized hours (never lands on the exclusive close)', () => {
+    const cal = { ...DEFAULT_BUSINESS_CALENDAR, openMinute: 10 * 60, closeMinute: 16 * 60 };
+    const v = defaultRequestedPickupTime(NOW, cal);
+    expect(v).toBe('2026-08-07T14:00:00.000Z'); // 15:00 Lagos = close - 1h
+    expect(isValidRequestedPickupTime(v, NOW, cal)).toBe(true)
   })
 
   test('produces a value that passes its own validation', () => {

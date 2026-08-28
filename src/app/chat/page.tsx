@@ -12,7 +12,7 @@ import {
 } from '@/lib/api';
 
 /**
- * Paberin AI Chat — wired to /api/chat with Agnes 2.0 Flash.
+ * Paberin AI Chat — wired to /api/chat with DeepSeek (deepseek-chat).
  *
  * Talk to Paberin's AI assistant about materials, lead times, quotes,
  * delivery, anything. If the assistant builds a quote during the chat,

@@ -20,7 +20,9 @@ export function LenisProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     // Skip Lenis on touch devices — smooth-scroll libraries cause
     // jank on mobile and interfere with native momentum scrolling.
-    if (window.matchMedia('(pointer: coarse)').matches) return;
+    // Also skip it for users who prefer reduced motion, restoring native scroll.
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (window.matchMedia('(pointer: coarse)').matches || reduceMotion) return;
 
     const instance = new Lenis({
       duration: 1.2,

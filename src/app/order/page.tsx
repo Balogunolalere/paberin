@@ -33,6 +33,12 @@ import {
   validateOptionValues,
   hasChoiceImages,
 } from '@/lib/order-form';
+import {
+  type BusinessCalendar,
+  DEFAULT_BUSINESS_CALENDAR,
+  fmtClock,
+  getBusinessCalendar,
+} from '@/lib/business-calendar';
 
 /**
  * Paberin order form — 5-step wizard.
@@ -56,7 +62,8 @@ interface FormState {
   serviceName: string;
   quantity: number;
   sla: 'Standard' | 'Express';
-  /** REQUIRED by the backend (ISO) — future, Mon–Fri, 09:00–18:00 Lagos, ≤30 days. */
+  /** REQUIRED by the backend (ISO) — future, working day (Mon–Fri minus
+   *  observed public holidays), within the configured hours, ≤30 days. */
   requestedPickupTime: string;
   /** Legacy flat options list → single dropdown value (string). */
   selectedVariant: string;
@@ -104,6 +111,8 @@ function OrderPageInner() {
   const [servicesLoading, setServicesLoading] = useState(true);
   const [servicesError, setServicesError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(initialState);
+  // Configurable business calendar (open/close + observed public holidays).
+  const [cal, setCal] = useState<BusinessCalendar>(DEFAULT_BUSINESS_CALENDAR);
   const [quote, setQuote] = useState<QuoteResponse | null>(null);
   const [quoteLoading, setQuoteLoading] = useState(false);
   const [referralValid, setReferralValid] = useState<null | { valid: boolean; reward?: number; referrer?: string }>(null);
@@ -144,16 +153,24 @@ function OrderPageInner() {
   }, [customer]);
 
   // Default pickup time — the backend REQUIRES requestedPickupTime on every
-  // quote/order. Prefill now + 2 working days at 17:00 Lagos (the same
-  // default the chat route uses) so the live quote works immediately and the
-  // customer only touches the picker when they want a different slot.
+  // quote/order. Prefill now + 2 working days at one hour before closing
+  // (16:00 Lagos by default) within the CONFIGURED business calendar (custom
+  // hours + observed public holidays), so the live quote works immediately.
   // Client-side only (effect) so the SSR markup stays hydration-clean.
   useEffect(() => {
-    setForm((prev) =>
-      prev.requestedPickupTime
-        ? prev
-        : { ...prev, requestedPickupTime: defaultRequestedPickupTime() }
-    );
+    let live = true;
+    getBusinessCalendar().then((cal) => {
+      if (!live) return;
+      setCal(cal);
+      setForm((prev) =>
+        prev.requestedPickupTime
+          ? prev
+          : { ...prev, requestedPickupTime: defaultRequestedPickupTime(Date.now(), cal) }
+      );
+    });
+    return () => {
+      live = false;
+    };
   }, []);
 
   // Reorder prefill: when the dashboard sends ?service=…&qty=…, look up
@@ -201,7 +218,7 @@ function OrderPageInner() {
       chatPrefillApplied.current = true;
       // A valid pickup time given in chat wins over the default.
       const pickupTime =
-        specs.requested_pickup_time && isValidRequestedPickupTime(specs.requested_pickup_time)
+        specs.requested_pickup_time && isValidRequestedPickupTime(specs.requested_pickup_time, Date.now(), cal)
           ? specs.requested_pickup_time
           : undefined;
       if (specs.service_type) {
@@ -308,7 +325,7 @@ function OrderPageInner() {
   const hasLegacyOptions = (selectedService?.options?.length ?? 0) > 0 && !hasStructuredOptions;
   const optionErrors = validateOptionValues(selectedService?.optionFields, form.selectedOptions);
   const pickupParts = pickupTimeParts(form.requestedPickupTime);
-  const pickupErrorMsg = form.requestedPickupTime ? pickupTimeError(form.requestedPickupTime) : null;
+  const pickupErrorMsg = form.requestedPickupTime ? pickupTimeError(form.requestedPickupTime, Date.now(), cal) : null;
   const optionSummary: string[] = [];
   if (!customMode) {
     if (form.selectedVariant) optionSummary.push(form.selectedVariant);
@@ -327,7 +344,7 @@ function OrderPageInner() {
   const fetchQuote = useCallback(async () => {
     if (customMode) return; // custom jobs are priced by the team (QUOTING), not the engine
     if (!form.serviceType || !form.quantity) return;
-    if (!isValidRequestedPickupTime(form.requestedPickupTime)) {
+    if (!isValidRequestedPickupTime(form.requestedPickupTime, Date.now(), cal)) {
       setQuote(null);
       return;
     }
@@ -412,7 +429,7 @@ function OrderPageInner() {
     if (step === 1) return customMode || !!form.serviceType;
     if (step === 2) {
       // Pickup time is REQUIRED by the backend (custom jobs included).
-      if (!isValidRequestedPickupTime(form.requestedPickupTime)) return false;
+      if (!isValidRequestedPickupTime(form.requestedPickupTime, Date.now(), cal)) return false;
       if (!customMode) {
         if (hasStructuredOptions && !optionErrors.valid) return false;
         if (hasLegacyOptions && !form.selectedVariant) return false;
@@ -441,8 +458,8 @@ function OrderPageInner() {
     setError(null);
     if (!canProceed()) {
       let message = 'Please complete all required fields before continuing.';
-      if (step === 2 && !isValidRequestedPickupTime(form.requestedPickupTime)) {
-        message = pickupTimeError(form.requestedPickupTime) || 'Please choose a valid pickup date & time.';
+      if (step === 2 && !isValidRequestedPickupTime(form.requestedPickupTime, Date.now(), cal)) {
+        message = pickupTimeError(form.requestedPickupTime, Date.now(), cal) || 'Please choose a valid pickup date & time.';
       } else if (step === 2 && !customMode && hasStructuredOptions && !optionErrors.valid) {
         message = 'Please complete all required options.';
       } else if (step === 2 && !customMode && hasLegacyOptions && !form.selectedVariant) {
@@ -1163,7 +1180,8 @@ function OrderPageInner() {
                         min={lagosDateISO(0)}
                         max={lagosDateISO(30)}
                         onChange={(e) => {
-                          const iso = pickupTimeFromParts(e.target.value, pickupParts?.time || '17:00');
+                          const fallbackTime = fmtClock(Math.max(cal.openMinute, cal.closeMinute - 60));
+                          const iso = pickupTimeFromParts(e.target.value, pickupParts?.time || fallbackTime);
                           if (iso) update('requestedPickupTime', iso);
                         }}
                         className="form-input"
@@ -1171,8 +1189,8 @@ function OrderPageInner() {
                       <input
                         type="time"
                         value={pickupParts?.time ?? ''}
-                        min="09:00"
-                        max="18:00"
+                        min={fmtClock(cal.openMinute)}
+                        max={fmtClock(cal.closeMinute - 1)}
                         onChange={(e) => {
                           const iso = pickupTimeFromParts(pickupParts?.date ?? '', e.target.value);
                           if (iso) update('requestedPickupTime', iso);
@@ -1182,8 +1200,8 @@ function OrderPageInner() {
                     </div>
                     {pickupErrorMsg && <p className="text-xs text-[#E05200]">{pickupErrorMsg}</p>}
                     <p className="text-[11px] text-[#888888]">
-                      Monday–Friday only, 09:00–18:00 (Lagos), within 30 days. Earlier pickups
-                      add an express fee.
+                      Monday–Friday only (observed public holidays excluded), {fmtClock(cal.openMinute)}–{fmtClock(cal.closeMinute)} (Lagos),
+                      within 30 days. Earlier pickups add an express fee.
                     </p>
                   </div>
 
