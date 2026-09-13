@@ -180,7 +180,9 @@ describe('formatServiceLine', () => {
 
   it('flattens object choices (including image choices) to plain values', () => {
     const line = formatServiceLine(CARDBOARD_TOPPER);
-    expect(line).toContain('choices: Gold, Silver');
+    // Structured fields render with their KEY (the engine needs it to price) and
+    // mark required ones, so the model can emit selected_options.
+    expect(line).toContain('fields: colour=Gold|Silver');
     expect(line).not.toContain('cdn.example');
   });
 

@@ -45,7 +45,7 @@ import {
 } from '@/lib/chat';
 import { defaultRequestedPickupTime, isValidRequestedPickupTime } from '@/lib/order-form';
 import { getBusinessCalendar } from '@/lib/business-calendar';
-import { getCatalogSnapshot, buildCatalogMessage } from '@/lib/chat-catalog';
+import { getCatalogSnapshot, buildCatalogMessage, resolveServiceType } from '@/lib/chat-catalog';
 
 // DeepSeek API configuration (OpenAI-compatible)
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
@@ -179,14 +179,26 @@ async function callAdminQuote(specs: ChatSpecs, customerPhone?: string): Promise
     specs.requested_pickup_time && isValidRequestedPickupTime(specs.requested_pickup_time)
       ? specs.requested_pickup_time
       : defaultRequestedPickupTime(Date.now(), await getBusinessCalendar());
+  // Resolve the model's type key against the catalog it was shown. The engine
+  // matches EXACTLY and keys are not uniformly cased (the live catalog has
+  // `paberin_plain_cardboard_cake_Topper`), so a model that re-cases the key
+  // would otherwise make a real service unpriceable. Cached + coalesced, so this
+  // costs nothing on top of the fetch the request already made.
+  const catalog = await getCatalogSnapshot('PABERIN');
+  const serviceType = resolveServiceType(specs.service_type, catalog?.types ?? []) ?? specs.service_type;
+
   const payload = {
     brand: 'PABERIN',
-    serviceType: specs.service_type,
+    serviceType,
     quantity: specs.quantity,
     sla: specs.sla || 'Standard',
     requestedPickupTime,
     deliveryMethod: specs.delivery,
     deliveryAddress: specs.delivery === 'LOCAL_DELIVERY' ? specs.delivery_address : undefined,
+    // Required option values (e.g. a topper colour). Without these the engine
+    // returns 400 `Option "colour" is required` and the customer gets no price
+    // at all — every topper was unpriceable through chat before this.
+    ...(specs.selected_options ? { selectedOptions: specs.selected_options } : {}),
     ...(customerPhone ? { customerPhone } : {}),
   };
   const res = await retryWithBackoff(
