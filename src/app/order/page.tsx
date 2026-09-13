@@ -1107,6 +1107,10 @@ function OrderPageInner() {
                                   onChange={(e) => updateOption(field.key, e.target.value)}
                                   className="form-input resize-none"
                                 />
+                                {/* This value is reproduced verbatim on the finished piece. */}
+                                <p className="text-[11px] text-[#888888]">
+                                  Case sensitive — write it exactly as you want it produced.
+                                </p>
                                 {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
                               </div>
                             );
@@ -1137,6 +1141,10 @@ function OrderPageInner() {
                                 onChange={(e) => updateOption(field.key, e.target.value)}
                                 className="form-input"
                               />
+                              {/* This value is reproduced verbatim on the finished piece. */}
+                              <p className="text-[11px] text-[#888888]">
+                                Case sensitive — write it exactly as you want it produced.
+                              </p>
                               {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
                             </div>
                           );
