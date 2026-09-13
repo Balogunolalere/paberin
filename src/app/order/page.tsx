@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { AvailabilityLine } from '@/components/AvailabilityLine';
 import { AddressPicker } from '@/components/AddressPicker';
+import { DesignFileThumbs } from '@/components/DesignFilePreview';
 import { usePaberinAuth } from '@/lib/auth';
 import {
   api,
@@ -1228,6 +1229,11 @@ function OrderPageInner() {
                           ? `✓ ${uploadFiles.length} file${uploadFiles.length > 1 ? 's' : ''} selected`
                           : 'Choose Files'}
                       </button>
+                      {/* Thumbnails so the customer can confirm the right file
+                          was picked, right where they picked it. */}
+                      {uploadFiles.length > 0 && (
+                        <DesignFileThumbs files={uploadFiles} className="mt-2" />
+                      )}
                       {uploadFiles.length > 0 && (
                         <div className="space-y-1">
                           {uploadFiles.map((f, i) => (
@@ -1469,6 +1475,10 @@ function OrderPageInner() {
                       <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">
                         Design & Notes
                       </p>
+                      {/* Last chance to catch a wrong attachment before paying. */}
+                      {uploadFiles.length > 0 && (
+                        <DesignFileThumbs files={uploadFiles} className="mb-3" />
+                      )}
                       {uploadFiles.length > 0 && (
                         <div className="space-y-1">
                           {uploadFiles.map((f, i) => (
