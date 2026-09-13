@@ -445,11 +445,15 @@ function OrderPageInner() {
       return true;
     }
     if (step === 4) {
+      // Email is optional (the field is labelled as such): require it only in
+      // the sense that IF one is typed it must look like an address. A blank
+      // value is a valid choice — the backend accepts it and the customer is
+      // reached by phone, which is the identity we actually use.
+      const email = form.customerEmail.trim();
       return (
         !!form.customerName.trim() &&
         isValidPhone(form.customerPhone) &&
-        !!form.customerEmail.trim() &&
-        /^\S+@\S+\.\S+$/.test(form.customerEmail)
+        (email === '' || /^\S+@\S+\.\S+$/.test(email))
       );
     }
     return true;
@@ -1400,7 +1404,7 @@ function OrderPageInner() {
                   </div>
                   <div className="space-y-2">
                     <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
-                      <span className="text-[#FF5C00]">03</span> Email
+                      <span className="text-[#FF5C00]">03</span> Email (optional)
                     </label>
                     <input
                       type="email"
@@ -1408,7 +1412,6 @@ function OrderPageInner() {
                       onChange={(e) => update('customerEmail', e.target.value)}
                       placeholder="you@example.com"
                       className="form-input"
-                      required
                     />
                   </div>
                 </div>
