@@ -45,6 +45,7 @@ import {
 } from '@/lib/chat';
 import { defaultRequestedPickupTime, isValidRequestedPickupTime } from '@/lib/order-form';
 import { getBusinessCalendar } from '@/lib/business-calendar';
+import { getCatalogSnapshot, buildCatalogMessage } from '@/lib/chat-catalog';
 
 // DeepSeek API configuration (OpenAI-compatible)
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
@@ -353,10 +354,23 @@ export async function POST(request: NextRequest) {
     // follow-up messages keep their context. We use the client-supplied
     // `history` when present — context NEVER comes from sessionId alone
     // (sessionId is only echoed back and used for admin session saves).
+    //
+    // Ground the model in the LIVE catalog. The owner adds/renames/deactivates
+    // services in the admin Services page at any time, so a prompt-only roster
+    // goes stale — it used to deny we make card cake toppers, which we sell.
+    // Injected as a SECOND system message so the persona stays stable, and
+    // because `cacheKey` below is derived from these messages a catalog change
+    // also invalidates the response cache automatically.
+    const catalog = await getCatalogSnapshot('PABERIN');
+
     const deepseekMessages = [
       {
         role: 'system' as const,
         content: PABERIN_SYSTEM_PROMPT,
+      },
+      {
+        role: 'system' as const,
+        content: buildCatalogMessage(catalog),
       },
       ...sanitizedHistory,
       { role: 'user' as const, content: message },
