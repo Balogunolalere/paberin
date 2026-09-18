@@ -52,5 +52,9 @@
       "esbuild",
       "@swc/core"
     ]
-  }
+  },
+  "engines": {
+    "node": ">=20.9"
+  },
+  "packageManager": "pnpm@11.9.0"
 }
