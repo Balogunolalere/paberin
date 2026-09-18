@@ -31,6 +31,7 @@ import {
   lagosDateISO,
   formatPickupLabel,
   optionInputModel,
+  summarizeOptionErrors,
   validateOptionValues,
   hasChoiceImages,
 } from '@/lib/order-form';
@@ -466,7 +467,9 @@ function OrderPageInner() {
       if (step === 2 && !isValidRequestedPickupTime(form.requestedPickupTime, Date.now(), cal)) {
         message = pickupTimeError(form.requestedPickupTime, Date.now(), cal) || 'Please choose a valid pickup date & time.';
       } else if (step === 2 && !customMode && hasStructuredOptions && !optionErrors.valid) {
-        message = 'Please complete all required options.';
+        // Name the field(s): "Please complete all required options" told the
+        // customer nothing about WHICH one was empty.
+        message = summarizeOptionErrors(optionErrors.errors) ?? 'Please complete all required options.';
       } else if (step === 2 && !customMode && hasLegacyOptions && !form.selectedVariant) {
         message = 'Please choose an option before continuing.';
       } else if (step === 4 && !isValidPhone(form.customerPhone)) {
@@ -486,6 +489,11 @@ function OrderPageInner() {
 
   const submit = async () => {
     setError(null);
+    // Defence in depth: the wizard's step gate should make this unreachable.
+    if (!customMode && hasStructuredOptions && !optionErrors.valid) {
+      setError(summarizeOptionErrors(optionErrors.errors) ?? 'Please complete all required options.');
+      return;
+    }
     setSubmitting(true);
     try {
       // Step 0: Upload design files to Cloudinary (best-effort, non-blocking)

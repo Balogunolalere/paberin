@@ -247,7 +247,9 @@ export function validateOptionValues(
     if (!text) continue;
     if (field.type === 'number') {
       const n = Number(text);
-      if (!Number.isFinite(n)) errors[field.key] = `${field.label} must be a number`;
+      // The backend demands a WHOLE number (`Number.isInteger`), not merely a
+      // finite one — "2.5" is rejected there, so it must not pass here.
+      if (!Number.isInteger(n)) errors[field.key] = `${field.label} must be a whole number`;
       else if (typeof field.min === 'number' && n < field.min)
         errors[field.key] = `${field.label} must be at least ${field.min}`;
       else if (typeof field.max === 'number' && n > field.max)
@@ -255,12 +257,26 @@ export function validateOptionValues(
     } else {
       if (typeof field.maxLength === 'number' && text.length > field.maxLength) {
         errors[field.key] = `${field.label} must be at most ${field.maxLength} characters`;
-      } else if (field.type === 'dropdown' && choices.length > 0 && !choices.some((c) => c.value === text)) {
+      } else if (field.type === 'dropdown' && !choices.some((c) => c.value === text)) {
+        // No choices configured means NOTHING is valid: the backend resolves the
+        // value with `choices?.find(...)` and rejects a miss.
         errors[field.key] = `${field.label} must be one of the listed options`;
       }
     }
   }
   return { valid: Object.keys(errors).length === 0, errors };
+}
+
+/**
+ * One line naming what is wrong with the options, for a banner. The first two
+ * problems only: a customer with three empty fields should not be read a
+ * paragraph (the full list is already shown under each field).
+ */
+export function summarizeOptionErrors(errors: Record<string, string>): string | null {
+  const messages = Object.values(errors).filter(Boolean);
+  if (messages.length === 0) return null;
+  const head = messages.slice(0, 2).join('; ');
+  return messages.length > 2 ? `${head}; +${messages.length - 2} more` : head;
 }
 
 /** Coerce validated option values for the wire: numbers → numbers, trimmed, capped. */
