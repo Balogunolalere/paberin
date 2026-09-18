@@ -13,17 +13,54 @@
 
 const API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
 
+/**
+ * Error thrown by apiFetch, carrying the HTTP status and the backend's error
+ * code. Callers must branch on these, never on the message text: deciding
+ * "this phone has no orders" by searching the prose for "not found" breaks the
+ * moment the wording changes — and would have classified a rate limit or a
+ * server fault as a brand-new customer.
+ */
+export class ApiError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.code = code;
+  }
+
+  get isNotFound(): boolean {
+    return this.status === 404;
+  }
+
+  get isRateLimited(): boolean {
+    return this.status === 429;
+  }
+}
+
 /** Low-level fetch wrapper that normalises the admin's `{ data, error }` envelope. */
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(options?.headers || {}),
-    },
-    // Paberin is a static customer site — never cache API responses.
-    cache: 'no-store',
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options?.headers || {}),
+      },
+      // Paberin is a static customer site — never cache API responses.
+      cache: 'no-store',
+    });
+  } catch (err) {
+    // fetch only rejects for network/CORS failures. Keep whatever the
+    // transport said (it is more useful to support than a generic sentence)
+    // and fall back only when there is nothing to preserve. Status 0 means
+    // "never reached the server".
+    const cause = err instanceof Error && err.message ? err.message : '';
+    throw new ApiError(cause || 'Network error. Please check your connection and try again.', 0);
+  }
 
   let data: any = null;
   try {
@@ -37,7 +74,7 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
       data?.error?.message ||
       data?.error?.code ||
       `Request failed (${res.status})`;
-    throw new Error(message);
+    throw new ApiError(message, res.status, data?.error?.code);
   }
 
   return (data?.data ?? data) as T;

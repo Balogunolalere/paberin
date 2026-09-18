@@ -252,7 +252,7 @@ function OrderPageInner() {
     } catch {
       // Specs parse failed — let user fill manually
     }
-  }, [searchParams, servicesLoading, services]);
+  }, [searchParams, servicesLoading, services, cal]);
 
   // Fetch services on mount
   useEffect(() => {
@@ -382,7 +382,7 @@ function OrderPageInner() {
     } finally {
       setQuoteLoading(false);
     }
-  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, hasStructuredOptions, hasLegacyOptions, optionErrors.valid, customer?.isNew]);
+  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, hasStructuredOptions, hasLegacyOptions, optionErrors.valid, customer?.isNew, cal]);
 
   useEffect(() => {
     if (step >= 2 && form.serviceType) {

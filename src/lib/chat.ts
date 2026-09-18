@@ -381,6 +381,9 @@ const HARD_INJECTION_PATTERNS = [
   /^\[system\]\s*/im,
   /ignore (all |your )?(previous |prior )?instructions/i,
   /override your /i,
+  // "disregard the above and …" is the same attack with a different verb; the
+  // list only had "ignore".
+  /disregard (the |all )?(above|previous|prior|instructions)/i,
 ];
 
 // Conversational phrases that are also attack-shaped — only flagged for

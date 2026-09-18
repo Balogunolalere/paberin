@@ -50,7 +50,7 @@ import { getCatalogSnapshot, buildCatalogMessage, resolveServiceType } from '@/l
 // DeepSeek API configuration (OpenAI-compatible)
 const DEEPSEEK_API_KEY = process.env.DEEPSEEK_API_KEY;
 const DEEPSEEK_API_URL = 'https://api.deepseek.com/chat/completions';
-const CHAT_MODE = process.env.CHAT_MODE || 'live'; // 'live' or 'mock'
+const REQUESTED_CHAT_MODE = process.env.CHAT_MODE || 'live'; // 'live' or 'mock'
 const ADMIN_API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
 
 // Robustness configuration — validated; invalid env values fall back to defaults
@@ -65,8 +65,19 @@ const RATE_LIMIT_WINDOW = parseEnvInt('RATE_LIMIT_WINDOW', 60000); // 1min defau
 // timeout) don't re-hit the slow LLM and trip the platform's 504.
 import { chatCacheGet, chatCacheSet } from '@/lib/chat-cache';
 
-if (CHAT_MODE === 'live' && !DEEPSEEK_API_KEY) {
-  throw new Error('DEEPSEEK_API_KEY environment variable is required in live mode');
+/**
+ * A missing key must not take the endpoint down. This used to `throw` at module
+ * scope, which fails the whole route on import: every chat request 500s with no
+ * explanation — including on a deploy where someone simply forgot to set the
+ * variable — even though the mock path below exists precisely for that case.
+ * Degrade to mock instead, loudly.
+ */
+const CHAT_MODE = REQUESTED_CHAT_MODE === 'live' && !DEEPSEEK_API_KEY ? 'mock' : REQUESTED_CHAT_MODE;
+if (REQUESTED_CHAT_MODE === 'live' && !DEEPSEEK_API_KEY) {
+  console.error(
+    '[chat] CHAT_MODE=live but DEEPSEEK_API_KEY is missing — serving MOCK replies. ' +
+      'Set DEEPSEEK_API_KEY (or CHAT_MODE=mock to silence this).',
+  );
 }
 
 

@@ -321,7 +321,7 @@ const testSuites = {
       description: 'Should handle special characters and emojis correctly',
       async run() {
         const responses = await Promise.all([
-          sendMessage('What's your policy?'),
+          sendMessage("What's your policy?"),
           sendMessage('Can you cut αβγ?'),
           sendMessage('Hello 👋 how are you?'),
           sendMessage('Price: ₦10,000?'),

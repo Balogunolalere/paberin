@@ -19,7 +19,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { api, type Order } from '@/lib/api';
+import { api, type Order, ApiError } from '@/lib/api';
 
 export interface PaberinCustomer {
   phone: string;
@@ -112,16 +112,18 @@ export function PaberinAuthProvider({ children }: { children: ReactNode }) {
         persist(profile);
         return { ok: true, isNewCustomer: false };
       } catch (err: any) {
-        const msg = String(err?.message || '');
-        // If the admin responds 404 NOT_FOUND, the phone has no orders yet
-        if (msg.includes('No orders found') || msg.includes('NOT_FOUND') || msg.includes('not found')) {
+        // Branch on the STATUS, not the prose: the old check searched the
+        // message for "not found" / "NOT_FOUND", so a rate-limited or broken
+        // request could be read as "new customer", and any rewording of the
+        // admin's message would break the signup path silently.
+        if (err instanceof ApiError && err.isNotFound) {
           return {
             ok: false,
             error: 'No orders found for this number. Place your first order or sign up as a new customer.',
             isNewCustomer: true,
           };
         }
-        return { ok: false, error: msg || 'Could not verify phone. Try again.' };
+        return { ok: false, error: err?.message || 'Could not verify phone. Try again.' };
       }
     },
     [persist]
