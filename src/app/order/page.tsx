@@ -17,7 +17,7 @@ import {
   type Order,
   type ChatResponse,
 } from '@/lib/api';
-import { buildChatOrderNotes, chatOptionSelection } from '@/lib/chat-order';
+import { buildChatOrderNotes, chatOptionSelection, resolveChatHandoff, takeChatHandoff } from '@/lib/chat-order';
 import type { ChatSpecs } from '@/lib/chat';
 import {
   buildQuotePayload,
@@ -209,16 +209,20 @@ function OrderPageInner() {
     if (chatPrefillApplied.current) return;
     if (servicesLoading || services.length === 0) return;
     const from = searchParams.get('from');
-    const specsRaw = searchParams.get('specs');
     if (searchParams.get('custom') === '1') {
       chatPrefillApplied.current = true;
       setCustomMode(true);
       setStep(2);
       return;
     }
-    if (from !== 'chat' || !specsRaw) return;
+    // The details now arrive in sessionStorage, single use, so the URL carries
+    // nothing about the order. A link built before that change still has them in
+    // `specs`, and is still honoured.
+    const handoff = resolveChatHandoff(takeChatHandoff(), searchParams.get('specs'), searchParams.get('context'));
+    if (!handoff) return;
     try {
-      const specs = JSON.parse(specsRaw) as ChatSpecs;
+      const specs = handoff.specs;
+      const context = handoff.context ?? null;
       chatPrefillApplied.current = true;
       // A valid pickup time given in chat wins over the default.
       const pickupTime =
@@ -241,7 +245,7 @@ function OrderPageInner() {
           ...(carried.selectedVariant ? { selectedVariant: carried.selectedVariant } : {}),
           deliveryMethod: specs.delivery === 'LOCAL_DELIVERY' ? 'LOCAL_DELIVERY' : 'PICKUP',
           deliveryAddress: specs.delivery_address || prev.deliveryAddress,
-          customerNotes: buildChatOrderNotes(specs, searchParams.get('context')) || prev.customerNotes,
+          customerNotes: buildChatOrderNotes(specs, context) || prev.customerNotes,
           ...(pickupTime ? { requestedPickupTime: pickupTime } : {}),
         }));
       } else {
@@ -252,14 +256,15 @@ function OrderPageInner() {
         setForm((prev) => ({
           ...prev,
           quantity: specs.quantity > 0 ? specs.quantity : 1,
-          customerNotes: buildChatOrderNotes(specs, searchParams.get('context')) || prev.customerNotes,
+          customerNotes: buildChatOrderNotes(specs, context) || prev.customerNotes,
           ...(pickupTime ? { requestedPickupTime: pickupTime } : {}),
         }));
       }
       // Always jump to step 2 so they can review and adjust
       setStep(2);
     } catch {
-      // Specs parse failed — let user fill manually
+      // Anything unexpected while applying the handoff: the customer fills the
+      // form themselves rather than facing a broken page.
     }
   }, [searchParams, servicesLoading, services, cal]);
 

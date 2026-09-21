@@ -41,6 +41,17 @@ export class ApiError extends Error {
 }
 
 /** Low-level fetch wrapper that normalises the admin's `{ data, error }` envelope. */
+/**
+ * How long a request may stay unanswered before it is abandoned.
+ *
+ * Without this, a request that never settles leaves the caller's spinner up
+ * forever — which is what a customer reported as "stuck on loading services":
+ * the order form's service list had no error to show because nothing ever
+ * failed, it simply never finished. A timeout turns that silence into an error
+ * the form can display and offer to retry.
+ */
+export const REQUEST_TIMEOUT_MS = 30_000;
+
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -52,8 +63,23 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
       },
       // Paberin is a static customer site — never cache API responses.
       cache: 'no-store',
+      // A caller may pass its own signal (a longer upload, say); ours only
+      // applies when they have not.
+      signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (err) {
+    // A timeout aborts the fetch, so it lands here with an AbortError whose
+    // message ("signal timed out") means nothing to a customer.
+    const timedOut =
+      (err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError')) ||
+      (err instanceof Error && /timed out|abort/i.test(err.message));
+    if (timedOut) {
+      throw new ApiError(
+        'This is taking longer than usual. Check your connection and try again.',
+        0,
+        'TIMEOUT',
+      );
+    }
     // fetch only rejects for network/CORS failures. Keep whatever the
     // transport said (it is more useful to support than a generic sentence)
     // and fall back only when there is nothing to preserve. Status 0 means

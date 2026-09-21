@@ -89,16 +89,80 @@ export function chatOptionSelection(
 }
 
 /**
- * Build the `/order` handoff URL from a chat quote.
+ * Where the chat leaves the order details for the form to pick up.
  *
- * Everything the assistant already knows travels with it — previously only
- * service_type, quantity and sla did, so `selected_options` and the pickup time
- * were silently lost between the two screens.
+ * NOT in the URL. It was, and the URL became the order: the customer's message
+ * text, their option values and what they had just said to the assistant all
+ * appeared in the address bar, in their browser history, in any Referer sent to
+ * a third party, and in the access logs of every hop. It is also fragile — a
+ * long spec nears URL limits, and a shared or reloaded link carries stale data.
+ *
+ * sessionStorage keeps it to this tab and this browsing session, and it is single
+ * use: the form takes it and clears it, so a reload cannot resurrect an old
+ * handoff. The URL keeps a bare `?from=chat` marker; a link built by an OLDER
+ * version of the chat (which put specs in the URL) still works, because the form
+ * falls back to reading it.
  */
-export function buildOrderHandoffUrl(
-  quote: Record<string, unknown> | null | undefined,
-  context?: string | null,
-): string {
+const HANDOFF_KEY = 'paberin.chat-order-handoff';
+
+export interface ChatHandoff {
+  specs: ChatSpecs;
+  context?: string;
+}
+
+/** Leave the details for the order form. Never throws: private mode can refuse. */
+export function stashChatHandoff(specs: ChatSpecs, context?: string | null): void {
+  try {
+    sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ specs, context: context || '' }));
+  } catch {
+    // Safari private mode, a full quota, storage disabled — the customer simply
+    // fills the form themselves rather than hitting an error they cannot act on.
+  }
+}
+
+/** Take the details, clearing them. Single use, so a reload starts clean. */
+export function takeChatHandoff(): ChatHandoff | null {
+  try {
+    const raw = sessionStorage.getItem(HANDOFF_KEY);
+    if (!raw) return null;
+    sessionStorage.removeItem(HANDOFF_KEY);
+    const parsed = JSON.parse(raw) as { specs?: unknown; context?: unknown };
+    if (!parsed || typeof parsed !== 'object' || !parsed.specs || typeof parsed.specs !== 'object') return null;
+    return {
+      specs: parsed.specs as ChatSpecs,
+      context: typeof parsed.context === 'string' && parsed.context ? parsed.context : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Which handoff to apply: the stashed one wins, and a specs payload in the URL is
+ * the legacy shape from links built before the stash existed. Null means there is
+ * nothing to prefill.
+ */
+export function resolveChatHandoff(
+  stashed: ChatHandoff | null,
+  urlSpecsRaw?: string | null,
+  urlContext?: string | null,
+): ChatHandoff | null {
+  if (stashed) return stashed;
+  if (!urlSpecsRaw) return null;
+  try {
+    const specs = JSON.parse(urlSpecsRaw) as ChatSpecs;
+    if (!specs || typeof specs !== 'object' || Array.isArray(specs)) return null;
+    return { specs, context: urlContext || undefined };
+  } catch {
+    return null; // a mangled link: let the customer fill the form in
+  }
+}
+
+/** The URL the chat navigates to. Deliberately carries nothing. */
+export const CHAT_ORDER_URL = '/order?from=chat';
+
+/** The specs to hand off from a priced quote. */
+export function buildChatSpecsFromQuote(quote: Record<string, unknown> | null | undefined): ChatSpecs {
   const b = (quote?.breakdown || {}) as Record<string, unknown>;
   const specs: ChatSpecs = {
     service_type: typeof b.serviceType === 'string' ? b.serviceType : null,
@@ -111,11 +175,17 @@ export function buildOrderHandoffUrl(
   if (typeof quote?.requested_pickup_time === 'string') specs.requested_pickup_time = quote.requested_pickup_time;
   if (quote?.delivery === 'LOCAL_DELIVERY' || quote?.delivery === 'PICKUP') specs.delivery = quote.delivery;
   if (typeof quote?.delivery_address === 'string') specs.delivery_address = quote.delivery_address;
+  return specs;
+}
 
-  const params = new URLSearchParams();
-  params.set('from', 'chat');
-  params.set('specs', JSON.stringify(specs));
-  const ctx = (context || '').trim();
-  if (ctx) params.set('context', ctx.slice(0, 200));
-  return `/order?${params.toString()}`;
+/** The specs to hand off for a job with no catalog match. */
+export function buildChatSpecsFromCustom(custom: Record<string, unknown> | null | undefined): ChatSpecs {
+  const quantity = Number(custom?.quantity);
+  return {
+    service_type: null,
+    custom_description: typeof custom?.description === 'string' ? custom.description : undefined,
+    material: typeof custom?.material === 'string' ? custom.material : undefined,
+    quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+    sla: custom?.sla === 'Express' ? 'Express' : undefined,
+  };
 }

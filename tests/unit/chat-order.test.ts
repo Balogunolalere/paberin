@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'vitest'
-import { buildChatOrderNotes, buildOrderHandoffUrl, chatOptionSelection } from '@/lib/chat-order'
+import { beforeEach, describe, expect, test } from 'vitest'
+import { CHAT_ORDER_URL, buildChatOrderNotes, buildChatSpecsFromCustom, buildChatSpecsFromQuote, chatOptionSelection, resolveChatHandoff, stashChatHandoff, takeChatHandoff } from '@/lib/chat-order'
 import type { ChatSpecs } from '@/lib/chat'
 
 /**
@@ -117,48 +117,128 @@ describe('chatOptionSelection — the answers reach the form', () => {
   });
 });
 
-describe('buildOrderHandoffUrl — what travels to /order', () => {
-  const parse = (url: string) => {
-    const [, qs] = url.split('?');
-    const params = new URLSearchParams(qs);
-    return { params, specs: JSON.parse(params.get('specs') || '{}') as Record<string, unknown> };
-  };
+describe('the handoff no longer travels in the URL', () => {
+  /** Minimal sessionStorage, so this file needs no DOM. */
+  const store = new Map<string, string>();
+  beforeEach(() => {
+    store.clear();
+    (globalThis as { sessionStorage?: unknown }).sessionStorage = {
+      getItem: (k: string) => (store.has(k) ? (store.get(k) as string) : null),
+      setItem: (k: string, v: string) => void store.set(k, v),
+      removeItem: (k: string) => void store.delete(k),
+    };
+  });
 
-  test('carries the options, which it used to drop', () => {
-    const { params, specs } = parse(
-      buildOrderHandoffUrl({
-        breakdown: { serviceType: 'paberin_topper_acrylic', quantity: 2, sla: 'Express' },
-        selected_options: { fonts: 'Clarendon', message: 'Ada' },
-        requested_pickup_time: '2026-12-31T09:00:00.000Z',
-      }),
-    );
-    expect(params.get('from')).toBe('chat');
+  test('the details go to storage, not the address bar', () => {
+    stashChatHandoff({ service_type: 't', quantity: 1, sla: 'Standard', selected_options: { font: 'Clarendon' } }, 'ada topper');
+    const stashed = Array.from(store.values())[0];
+    expect(stashed).toContain('Clarendon');
+    // …and the URL the chat navigates to carries none of it.
+    expect(CHAT_ORDER_URL).toBe('/order?from=chat');
+    expect(CHAT_ORDER_URL).not.toContain('specs');
+    expect(CHAT_ORDER_URL).not.toContain('context');
+  });
+
+  test('taking it is single use, so a reload starts clean', () => {
+    const specs = { service_type: 't', quantity: 2, sla: 'Express' as const };
+    stashChatHandoff(specs, 'ctx');
+    const first = takeChatHandoff();
+    expect(first?.specs.quantity).toBe(2);
+    expect(first?.context).toBe('ctx');
+    expect(takeChatHandoff()).toBeNull();
+  });
+
+  test('nothing in storage reads as nothing to prefill', () => {
+    expect(takeChatHandoff()).toBeNull();
+  });
+
+  test('a corrupt entry is ignored rather than thrown at the customer', () => {
+    store.set('paberin.chat-order-handoff', 'not json');
+    expect(takeChatHandoff()).toBeNull();
+    store.set('paberin.chat-order-handoff', JSON.stringify({ context: 'no specs' }));
+    expect(takeChatHandoff()).toBeNull();
+  });
+
+  test('private mode (storage refusing to write) does not break the handoff', () => {
+    (globalThis as { sessionStorage?: unknown }).sessionStorage = {
+      getItem: () => null,
+      setItem: () => { throw new Error('QuotaExceededError'); },
+      removeItem: () => {},
+    };
+    expect(() => stashChatHandoff({ service_type: 't', quantity: 1, sla: 'Standard' })).not.toThrow();
+    expect(takeChatHandoff()).toBeNull();
+  });
+});
+
+describe('resolveChatHandoff — stashed first, legacy URL second', () => {
+  const stashed = { specs: { service_type: 'stashed', quantity: 1, sla: 'Standard' as const }, context: 'from storage' };
+
+  test('prefers the stash', () => {
+    const r = resolveChatHandoff(stashed, JSON.stringify({ service_type: 'from-url', quantity: 9, sla: 'Express' }), 'url ctx');
+    expect(r?.specs.service_type).toBe('stashed');
+    expect(r?.context).toBe('from storage');
+  });
+
+  test('falls back to a link built before the stash existed', () => {
+    const r = resolveChatHandoff(null, JSON.stringify({ service_type: 'from-url', quantity: 3, sla: 'Standard' }), 'url ctx');
+    expect(r?.specs.service_type).toBe('from-url');
+    expect(r?.specs.quantity).toBe(3);
+    expect(r?.context).toBe('url ctx');
+  });
+
+  test('says nothing rather than guessing', () => {
+    expect(resolveChatHandoff(null, null, null)).toBeNull();
+    expect(resolveChatHandoff(null, '', 'ctx')).toBeNull();
+    expect(resolveChatHandoff(null, 'not json', 'ctx')).toBeNull();
+    // Valid JSON that is not an object is not specs either.
+    expect(resolveChatHandoff(null, '"a string"', 'ctx')).toBeNull();
+    expect(resolveChatHandoff(null, '[1,2]', 'ctx')).toBeNull();
+  });
+});
+
+describe('buildChatSpecsFromQuote — what travels', () => {
+  test('carries the options and the deadline', () => {
+    const specs = buildChatSpecsFromQuote({
+      breakdown: { serviceType: 'paberin_topper_acrylic', quantity: 2, sla: 'Express' },
+      selected_options: { font: 'Clarendon', message: 'Ada' },
+      requested_pickup_time: '2026-12-31T09:00:00.000Z',
+      delivery: 'LOCAL_DELIVERY',
+      delivery_address: '12 Marina, Lagos',
+    });
     expect(specs).toMatchObject({
       service_type: 'paberin_topper_acrylic',
       quantity: 2,
       sla: 'Express',
-      selected_options: { fonts: 'Clarendon', message: 'Ada' },
+      selected_options: { font: 'Clarendon', message: 'Ada' },
       requested_pickup_time: '2026-12-31T09:00:00.000Z',
+      delivery: 'LOCAL_DELIVERY',
+      delivery_address: '12 Marina, Lagos',
     });
   });
 
-  test('omits what the quote does not have, and defaults the rest', () => {
-    const { specs } = parse(buildOrderHandoffUrl({ breakdown: { serviceType: 't' } }));
+  test('invents nothing when the quote is thin', () => {
+    const specs = buildChatSpecsFromQuote({ breakdown: { serviceType: 't' } });
     expect(specs.selected_options).toBeUndefined();
     expect(specs.requested_pickup_time).toBeUndefined();
     expect(specs.quantity).toBe(1);
-    expect(specs.sla).toBe('Standard');
+    expect(buildChatSpecsFromQuote(null).service_type).toBeNull();
+    expect(buildChatSpecsFromQuote({ breakdown: { quantity: -2 } }).quantity).toBe(1);
+  });
+});
+
+describe('buildChatSpecsFromCustom', () => {
+  test('carries the description and material, quantity defaulted', () => {
+    expect(buildChatSpecsFromCustom({ description: 'cut my jeans', material: 'denim' })).toMatchObject({
+      service_type: null,
+      custom_description: 'cut my jeans',
+      material: 'denim',
+      quantity: 1,
+    });
   });
 
-  test('keeps the context that explains the request, capped', () => {
-    const { params } = parse(buildOrderHandoffUrl({ breakdown: {} }, 'x'.repeat(500)));
-    expect(params.get('context')).toHaveLength(200);
-    expect(parse(buildOrderHandoffUrl({ breakdown: {} }, '   ')).params.get('context')).toBeNull();
-  });
-
-  test('survives a missing quote', () => {
-    const { specs } = parse(buildOrderHandoffUrl(null));
-    expect(specs.service_type).toBeNull();
-    expect(specs.quantity).toBe(1);
+  test('survives junk', () => {
+    expect(buildChatSpecsFromCustom(null).quantity).toBe(1);
+    expect(buildChatSpecsFromCustom({ quantity: 'lots' }).quantity).toBe(1);
+    expect(buildChatSpecsFromCustom({ quantity: 4 }).sla).toBeUndefined();
   });
 });

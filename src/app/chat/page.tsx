@@ -10,7 +10,9 @@ import {
   type ChatMessage,
   type ChatResponse,
 } from '@/lib/api';
-import { buildOrderHandoffUrl } from '@/lib/chat-order';
+import { CHAT_ORDER_URL, buildChatSpecsFromCustom, buildChatSpecsFromQuote, stashChatHandoff } from '@/lib/chat-order';
+import type { ChatSpecs } from '@/lib/chat';
+import { useRouter } from 'next/navigation';
 
 /**
  * Paberin AI Chat — wired to /api/chat with DeepSeek (deepseek-chat).
@@ -82,6 +84,7 @@ function renderMarkdown(text: string): React.ReactNode[] {
 }
 
 function ChatContent() {
+  const router = useRouter();
   const [messages, setMessages] = useState<UIMessage[]>([WELCOME_MSG]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -212,27 +215,14 @@ function ChatContent() {
     [messages, sending, sessionId]
   );
 
-  /** Build the /order handoff URL from ENGINE specs (exact service_type). */
-  const orderUrl = useCallback(
-    (quote: NonNullable<ChatResponse['quote']>) =>
-      buildOrderHandoffUrl(quote as unknown as Record<string, unknown>, lastUserQueryRef.current),
-    [],
-  );
-
-  /** Build the /order handoff URL for a custom (no-catalog-match) job. */
-  const customUrl = useCallback((custom: NonNullable<ChatResponse['custom']>) => {
-    const params = new URLSearchParams();
-    params.set('from', 'chat');
-    params.set('specs', JSON.stringify({
-      service_type: null,
-      custom_description: custom.description,
-      material: custom.material,
-      quantity: custom.quantity,
-      sla: custom.sla,
-    }));
-    if (lastUserQueryRef.current) params.set('context', lastUserQueryRef.current.slice(0, 200));
-    return `/order?${params.toString()}`;
-  }, []);
+  /**
+   * Hand the order off to the form: the details go to sessionStorage, the URL
+   * keeps only `?from=chat` — see @/lib/chat-order for why they are not in it.
+   */
+  const handOffToOrder = useCallback((specs: ChatSpecs) => {
+    stashChatHandoff(specs, lastUserQueryRef.current);
+    router.push(CHAT_ORDER_URL);
+  }, [router]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -346,7 +336,8 @@ function ChatContent() {
                         )}
                         {m.renderOrderNow && (
                           <Link
-                            href={orderUrl(m.quote!)}
+                            href={CHAT_ORDER_URL}
+                            onClick={(e) => { e.preventDefault(); handOffToOrder(buildChatSpecsFromQuote(m.quote!)); }}
                             className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide bg-white text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white border border-[#FF5C00] px-3 py-1.5 rounded-full transition-colors"
                           >
                             Order Now
@@ -357,7 +348,8 @@ function ChatContent() {
                         )}
                         {m.custom && !m.renderOrderNow && (
                           <Link
-                            href={customUrl(m.custom)}
+                            href={CHAT_ORDER_URL}
+                            onClick={(e) => { e.preventDefault(); handOffToOrder(buildChatSpecsFromCustom(m.custom)); }}
                             className="mt-3 inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide bg-white text-[#FF5C00] hover:bg-[#FF5C00] hover:text-white border border-[#FF5C00] px-3 py-1.5 rounded-full transition-colors"
                           >
                             Place Custom Order
@@ -443,7 +435,8 @@ function ChatContent() {
                   </p>
                 )}
                 <Link
-                  href={orderUrl(pendingQuote)}
+                  href={CHAT_ORDER_URL}
+                  onClick={(e) => { e.preventDefault(); handOffToOrder(buildChatSpecsFromQuote(pendingQuote)); }}
                   className="btn-primary mt-4 w-full"
                 >
                   Place This Order
@@ -463,7 +456,8 @@ function ChatContent() {
                   <p className="text-xs text-[#666666]">Material: {pendingCustom.material}</p>
                 )}
                 <Link
-                  href={customUrl(pendingCustom)}
+                  href={CHAT_ORDER_URL}
+                  onClick={(e) => { e.preventDefault(); handOffToOrder(buildChatSpecsFromCustom(pendingCustom)); }}
                   className="btn-primary mt-4 w-full"
                 >
                   Place Custom Order
