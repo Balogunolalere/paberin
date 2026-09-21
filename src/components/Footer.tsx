@@ -29,19 +29,8 @@ const COMPANY = [
 
 const SOCIALS = [
   {
-    label: 'Instagram',
-    href: 'https://instagram.com/skyal_laser_services',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="2" width="20" height="20" rx="5" />
-        <circle cx="12" cy="12" r="4" />
-        <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
-      </svg>
-    ),
-  },
-  {
     label: 'Email',
-    href: 'mailto:skyalservices@gmail.com',
+    href: 'mailto:sales@paberincreations.com',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
         <rect x="3" y="5" width="18" height="14" rx="2" />
@@ -51,7 +40,7 @@ const SOCIALS = [
   },
   {
     label: 'Call',
-    href: 'tel:+2348035003068',
+    href: 'tel:+2348060580419',
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72c.13.95.37 1.88.7 2.77a2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.31-1.27a2 2 0 012.11-.45c.89.33 1.82.57 2.77.7A2 2 0 0122 16.92z" />

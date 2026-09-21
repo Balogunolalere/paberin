@@ -563,7 +563,8 @@ export const api = {
   }) =>
     apiFetch<{ message: string }>('/api/contact', {
       method: 'POST',
-      body: JSON.stringify(body),
+      // Without this the backend delivered Paberin enquiries to Skyal's inbox.
+      body: JSON.stringify({ ...body, brand: 'PABERIN' }),
     }),
 
   /** Validate a referral code (PABERIN brand). */

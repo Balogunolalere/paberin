@@ -153,10 +153,10 @@ function TrackInner() {
                   <span className="font-mono text-black">PBR-2025-00123</span> and
                   was sent in your confirmation email or SMS. Lost it? Reach us at{' '}
                   <a
-                    href="mailto:skyalservices@gmail.com"
+                    href="mailto:sales@paberincreations.com"
                     className="text-[#FF5C00] hover:underline"
                   >
-                    skyalservices@gmail.com
+                    sales@paberincreations.com
                   </a>
                   .
                 </p>
@@ -328,10 +328,10 @@ function TrackInner() {
                     <p className="text-sm text-[#666666] leading-relaxed">
                       You can still modify or cancel this order. Contact us at{' '}
                       <a
-                        href="tel:+2348035003068"
+                        href="tel:+2348060580419"
                         className="text-[#FF5C00] hover:underline"
                       >
-                        0803 500 3068
+                        0806 058 0419
                       </a>{' '}
                       before it enters production.
                     </p>

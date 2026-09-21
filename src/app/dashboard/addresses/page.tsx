@@ -281,7 +281,7 @@ function AddressesContent() {
                   type="tel"
                   value={form.phone}
                   onChange={handleField}
-                  placeholder="0803 000 0000"
+                  placeholder="0806 000 0000"
                   className="form-input"
                 />
               </div>

@@ -142,7 +142,7 @@ function LoginInner() {
                     required
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
-                    placeholder="0803 500 3068"
+                    placeholder="0806 000 0000"
                     aria-invalid={error ? true : undefined}
                     aria-describedby={error ? 'login-error' : undefined}
                     className="form-input"

@@ -7,8 +7,8 @@ import { api } from '@/lib/api';
 const CONTACT_DETAILS = [
   {
     label: 'Email',
-    value: 'skyalservices@gmail.com',
-    href: 'mailto:skyalservices@gmail.com',
+    value: 'sales@paberincreations.com',
+    href: 'mailto:sales@paberincreations.com',
     external: false,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -19,8 +19,8 @@ const CONTACT_DETAILS = [
   },
   {
     label: 'Phone',
-    value: '0803 500 3068 / 0806 058 0419',
-    href: 'tel:+2348035003068',
+    value: '0806 058 0419',
+    href: 'tel:+2348060580419',
     external: false,
     icon: (
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
@@ -37,19 +37,6 @@ const CONTACT_DETAILS = [
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" />
         <circle cx="12" cy="10" r="3" />
-      </svg>
-    ),
-  },
-  {
-    label: 'Instagram',
-    value: '@skyal_laser_services',
-    href: 'https://instagram.com/skyal_laser_services',
-    external: true,
-    icon: (
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="2" width="20" height="20" rx="5" />
-        <circle cx="12" cy="12" r="4" />
-        <circle cx="17.5" cy="6.5" r="1" fill="currentColor" stroke="none" />
       </svg>
     ),
   },
@@ -242,7 +229,7 @@ export function ContactForm() {
                       type="tel"
                       value={form.phone}
                       onChange={handleChange}
-                      placeholder="0803 000 0000"
+                      placeholder="0806 000 0000"
                       autoComplete="tel"
                       className={inputBase}
                     />

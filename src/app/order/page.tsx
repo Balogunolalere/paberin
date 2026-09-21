@@ -473,7 +473,7 @@ function OrderPageInner() {
       } else if (step === 2 && !customMode && hasLegacyOptions && !form.selectedVariant) {
         message = 'Please choose an option before continuing.';
       } else if (step === 4 && !isValidPhone(form.customerPhone)) {
-        message = 'Please enter a valid Nigerian phone number (e.g. 0803 350 3068).';
+        message = 'Please enter a valid Nigerian phone number (e.g. 0806 000 0000).';
       }
       setError(message);
       return;
@@ -1405,7 +1405,7 @@ function OrderPageInner() {
                       type="tel"
                       value={form.customerPhone}
                       onChange={(e) => update('customerPhone', e.target.value)}
-                      placeholder="0803 500 3068"
+                      placeholder="0806 000 0000"
                       className="form-input"
                       required
                     />

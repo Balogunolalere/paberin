@@ -614,8 +614,8 @@ export async function POST(request: NextRequest) {
       : error?.message?.includes('rate limit')
         ? "We're experiencing high demand. Please try again shortly."
         : error?.message?.includes('authentication') || error?.message?.includes('server error')
-          ? "The assistant is temporarily unavailable. Please try again later or call 0803 500 3068."
-          : "I couldn't process that right now. Please try again, or call us at 0803 500 3068.";
+          ? "The assistant is temporarily unavailable. Please try again later or call 0806 058 0419."
+          : "I couldn't process that right now. Please try again, or call us at 0806 058 0419.";
 
     return NextResponse.json(
       {

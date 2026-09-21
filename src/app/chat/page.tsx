@@ -189,7 +189,7 @@ function ChatContent() {
                     ? 'The assistant is taking a bit longer than usual right now. Please try again in a moment.'
                     : timedOut
                       ? 'The assistant is taking too long to respond. Please try again.'
-                      : "I couldn't reach the assistant just now. Please try again, or call 0803 500 3068.",
+                      : "I couldn't reach the assistant just now. Please try again, or call 0806 058 0419.",
                   pending: false,
                   isError: true,
                 }
@@ -511,16 +511,16 @@ function ChatContent() {
               </p>
               <div className="space-y-2 text-sm">
                 <a
-                  href="tel:+2348035003068"
+                  href="tel:+2348060580419"
                   className="block text-[#FF5C00] hover:underline font-medium"
                 >
-                  0803 500 3068
+                  0806 058 0419
                 </a>
                 <a
-                  href="mailto:skyalservices@gmail.com"
+                  href="mailto:sales@paberincreations.com"
                   className="block text-[#FF5C00] hover:underline font-medium"
                 >
-                  skyalservices@gmail.com
+                  sales@paberincreations.com
                 </a>
                 <Link
                   href="/contact"
