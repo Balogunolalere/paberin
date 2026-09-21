@@ -17,7 +17,7 @@ import {
   type Order,
   type ChatResponse,
 } from '@/lib/api';
-import { buildChatOrderNotes } from '@/lib/chat-order';
+import { buildChatOrderNotes, chatOptionSelection } from '@/lib/chat-order';
 import type { ChatSpecs } from '@/lib/chat';
 import {
   buildQuotePayload,
@@ -227,12 +227,18 @@ function OrderPageInner() {
           : undefined;
       if (specs.service_type) {
         const match = services.find((s) => s.type === specs.service_type);
+        // Everything the customer already answered in chat comes across, options
+        // included — without this the form arrived empty and they retyped it all
+        // (and a required font, which chat cannot show, blocked the order).
+        const carried = chatOptionSelection(specs, match ?? null);
         setForm((prev) => ({
           ...prev,
           serviceType: match?.type || prev.serviceType,
           serviceName: match?.label || prev.serviceName,
           quantity: specs.quantity > 0 ? specs.quantity : 1,
           sla: specs.sla === 'Express' ? 'Express' : 'Standard',
+          ...(carried.selectedOptions ? { selectedOptions: carried.selectedOptions } : {}),
+          ...(carried.selectedVariant ? { selectedVariant: carried.selectedVariant } : {}),
           deliveryMethod: specs.delivery === 'LOCAL_DELIVERY' ? 'LOCAL_DELIVERY' : 'PICKUP',
           deliveryAddress: specs.delivery_address || prev.deliveryAddress,
           customerNotes: buildChatOrderNotes(specs, searchParams.get('context')) || prev.customerNotes,

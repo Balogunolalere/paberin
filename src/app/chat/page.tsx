@@ -10,6 +10,7 @@ import {
   type ChatMessage,
   type ChatResponse,
 } from '@/lib/api';
+import { buildOrderHandoffUrl } from '@/lib/chat-order';
 
 /**
  * Paberin AI Chat — wired to /api/chat with DeepSeek (deepseek-chat).
@@ -212,17 +213,11 @@ function ChatContent() {
   );
 
   /** Build the /order handoff URL from ENGINE specs (exact service_type). */
-  const orderUrl = useCallback((quote: NonNullable<ChatResponse['quote']>) => {
-    const params = new URLSearchParams();
-    params.set('from', 'chat');
-    params.set('specs', JSON.stringify({
-      service_type: quote.breakdown?.serviceType || null,
-      quantity: (quote.breakdown?.quantity as number) || 1,
-      sla: quote.breakdown?.sla === 'Express' ? 'Express' : 'Standard',
-    }));
-    if (lastUserQueryRef.current) params.set('context', lastUserQueryRef.current.slice(0, 200));
-    return `/order?${params.toString()}`;
-  }, []);
+  const orderUrl = useCallback(
+    (quote: NonNullable<ChatResponse['quote']>) =>
+      buildOrderHandoffUrl(quote as unknown as Record<string, unknown>, lastUserQueryRef.current),
+    [],
+  );
 
   /** Build the /order handoff URL for a custom (no-catalog-match) job. */
   const customUrl = useCallback((custom: NonNullable<ChatResponse['custom']>) => {
