@@ -18,8 +18,8 @@ import {
   previewStylesheetHref,
   previewTextFor,
 } from '@/lib/print-fonts';
-import { validateOptionValues, optionInputModel } from '@/lib/order-form';
-import type { OptionField } from '@/lib/api';
+import { buildOrderPayload, validateOptionValues, optionInputModel } from '@/lib/order-form';
+import type { OptionField, Service } from '@/lib/api';
 
 /** The names the backend accepts — pinned identically in its own test. */
 const BACKEND_NAMES = [
@@ -229,5 +229,45 @@ describe('the free stand-in chosen for each font', () => {
       if (name === 'Style Script') continue; // free, and its own match
       expect(PREVIEW_FALLBACK_FAMILIES).not.toContain(name);
     }
+  });
+});
+
+describe('what the customer does with a required font (the backend default)', () => {
+  /** Exactly the shape GET /api/services now serves: required, with the house list. */
+  const servedFont: OptionField = {
+    key: 'fonts',
+    label: 'Font',
+    type: 'font',
+    choices: BACKEND_NAMES,
+    required: true,
+  };
+
+  it('blocks the options step until a font is chosen', () => {
+    expect(validateOptionValues([servedFont], {}).valid).toBe(false);
+    expect(validateOptionValues([servedFont], {}).errors.fonts).toBe('Font is required');
+    expect(validateOptionValues([servedFont], { fonts: 'Clarendon' }).valid).toBe(true);
+  });
+
+  it('blocks a font that is not on the list, whatever else is filled in', () => {
+    expect(validateOptionValues([servedFont], { fonts: 'Papyrus', message: 'Ada' }).valid).toBe(false);
+  });
+
+  it('sends the chosen font with the order, so production gets it', () => {
+    const payload = buildOrderPayload({
+      // The service is what carries the field types, and the payload builder
+      // normalises the selection through them — so this is the real call shape.
+      service: {
+        optionFields: [servedFont, { key: 'message', label: 'Message', type: 'text' }],
+      } as unknown as Service,
+      serviceType: 'paberin_topper_acrylic',
+      quantity: 1,
+      sla: 'Standard',
+      requestedPickupTime: '2026-12-31T09:00:00.000Z',
+      customerName: 'Ada',
+      customerPhone: '08033503068',
+      customerEmail: '',
+      selectedOptions: { fonts: 'Clarendon', message: 'Ada' },
+    });
+    expect(payload).toMatchObject({ selectedOptions: { fonts: 'Clarendon', message: 'Ada' } });
   });
 });
