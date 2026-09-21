@@ -276,6 +276,44 @@ export function validateOptionValues(
   return { valid: Object.keys(errors).length === 0, errors };
 }
 
+/** Paystack's own idea of an email: enough to catch a blank or an obvious typo. */
+export const PAYMENT_EMAIL_RE = /^\S+@\S+\.\S+$/;
+
+export interface PaymentEmail {
+  /** What to send to Paystack. */
+  email: string;
+  /** A problem to fix before paying (a malformed address). */
+  error?: string;
+  /** True when nothing was typed, so a placeholder is standing in. */
+  usedPlaceholder?: boolean;
+}
+
+/**
+ * The email to charge a card against, and what to tell the customer about it.
+ *
+ * Three cases, because two rules pull against each other:
+ *  - a real address is used as given;
+ *  - an address that is typed but malformed BLOCKS, because it is almost always
+ *    a typo and Paystack would bounce the receipt;
+ *  - a blank one proceeds on a placeholder keyed to the order number. Paystack
+ *    requires *an* email on the transaction, and the customer is reached by phone
+ *    (the identity this business actually uses), so refusing to take their card
+ *    because they have no email would cost the sale. The placeholder is not a
+ *    mailbox, so the UI says the receipt is in their dashboard instead.
+ */
+export function paymentEmailFor(
+  email: string | null | undefined,
+  orderNumber: string,
+  fallbackDomain = 'paberin.vercel.app',
+): PaymentEmail {
+  const typed = (email || '').trim();
+  if (!typed) return { email: `order${orderNumber}@${fallbackDomain}`, usedPlaceholder: true };
+  if (!PAYMENT_EMAIL_RE.test(typed)) {
+    return { email: typed, error: 'That email address does not look right — check it before paying.' };
+  }
+  return { email: typed };
+}
+
 /**
  * One line naming what is wrong with the options, for a banner. The first two
  * problems only: a customer with three empty fields should not be read a

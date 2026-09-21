@@ -34,6 +34,7 @@ import {
   summarizeOptionErrors,
   validateOptionValues,
   hasChoiceImages,
+  paymentEmailFor,
 } from '@/lib/order-form';
 import {
   type BusinessCalendar,
@@ -600,10 +601,21 @@ function OrderPageInner() {
   /** Initialize Paystack payment and redirect to checkout. */
   const startPayment = useCallback(async (order: Order) => {
     setPaymentError(null);
+    // The order exists by now. A malformed address is a typo worth fixing; a
+    // missing one must not cost the sale (see paymentEmailFor).
+    const payEmail = paymentEmailFor(form.customerEmail, order.orderNumber);
+    if (payEmail.error) {
+      setPaymentError(payEmail.error);
+      setStep(4);
+      return;
+    }
+    if (payEmail.usedPlaceholder) {
+      setPaymentError('No email given — your receipt will be in your dashboard, not your inbox.');
+    }
     try {
       const pay = await api.initializePayment({
         amount: order.totalAmount,
-        email: form.customerEmail,
+        email: payEmail.email,
         orderNumber: order.orderNumber,
         brand: 'PABERIN',
         metadata: { orderNumber: order.orderNumber, brand: 'PABERIN' },

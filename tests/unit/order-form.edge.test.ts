@@ -13,6 +13,7 @@
  */
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import {
+  paymentEmailFor,
   isValidNigerianPhone,
   pickupTimeError,
   isValidRequestedPickupTime,
@@ -535,5 +536,45 @@ describe('apiFetch', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 504, json: async () => { throw new Error('html'); } }) as never));
     const err = (await apiFetch('/api/x').catch((e) => e)) as ApiError;
     expect(err.status).toBe(504);
+  });
+});
+
+/**
+ * The bug this pins, found by driving the real site in a browser: the order form
+ * treated email as optional (correctly — the backend accepts a blank one and the
+ * customer is reached by phone), but Paystack REQUIRES a customer email on the
+ * transaction, so `POST /api/payment/initialize` answered 400 INVALID_EMAIL and a
+ * customer with no email address could not pay at all.
+ */
+describe('paymentEmailFor — what a card payment is charged against', () => {
+  it('uses a real address as given', () => {
+    expect(paymentEmailFor('ada@example.com', 'PAB-1')).toEqual({ email: 'ada@example.com' });
+    expect(paymentEmailFor('  ada@example.com  ', 'PAB-1').email).toBe('ada@example.com');
+  });
+
+  it('stands in for a blank one rather than refusing the sale', () => {
+    const r = paymentEmailFor('', 'PAB-ABC123');
+    expect(r.email).toBe('orderPAB-ABC123@paberin.vercel.app');
+    expect(r.usedPlaceholder).toBe(true);
+    expect(r.error).toBeUndefined();
+    // The UI must say the receipt is not going to an inbox.
+  });
+
+  it('treats undefined and whitespace as blank', () => {
+    expect(paymentEmailFor(undefined, 'PAB-1').usedPlaceholder).toBe(true);
+    expect(paymentEmailFor(null, 'PAB-1').usedPlaceholder).toBe(true);
+    expect(paymentEmailFor('   ', 'PAB-1').usedPlaceholder).toBe(true);
+  });
+
+  it('refuses a typo, which would bounce the receipt', () => {
+    for (const bad of ['ada', 'ada@', '@example.com', 'ada@example', 'a b@example.com']) {
+      expect(paymentEmailFor(bad, 'PAB-1').error).toBeTruthy();
+    }
+  });
+
+  it('never invents an address when one was typed', () => {
+    const r = paymentEmailFor('ada@example', 'PAB-1');
+    expect(r.email).toBe('ada@example'); // returned as typed, but blocked by error
+    expect(r.usedPlaceholder).toBeUndefined();
   });
 });
