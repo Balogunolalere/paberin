@@ -88,7 +88,7 @@ export type OptionChoice = string | { value: string; image?: string };
 export interface OptionField {
   key: string;
   label: string;
-  type: 'dropdown' | 'text' | 'textarea' | 'number';
+  type: 'dropdown' | 'font' | 'text' | 'textarea' | 'number';
   choices?: OptionChoice[];
   required?: boolean;
   min?: number;

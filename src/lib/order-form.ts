@@ -169,7 +169,7 @@ export function formatPickupLabel(value: string): string {
 
 /* ───────────────────────────── Service options ───────────────────────────── */
 
-export type OptionInputKind = 'select' | 'text' | 'textarea' | 'number';
+export type OptionInputKind = 'select' | 'font' | 'text' | 'textarea' | 'number';
 
 /** Normalized dropdown choice — `choice.value` is what gets submitted. */
 export interface NormalizedOptionChoice {
@@ -215,6 +215,8 @@ export function optionInputModel(field: OptionField): OptionInputModel {
   return {
     key: field.key,
     label: field.label,
+    // A font field is its own input kind: a picker that renders each name in
+    // its own face, plus a live preview of the customer's text.
     kind: field.type === 'dropdown' ? 'select' : field.type,
     required: !!field.required,
     choices: normalizeChoices(field.choices),
@@ -257,10 +259,17 @@ export function validateOptionValues(
     } else {
       if (typeof field.maxLength === 'number' && text.length > field.maxLength) {
         errors[field.key] = `${field.label} must be at most ${field.maxLength} characters`;
-      } else if (field.type === 'dropdown' && !choices.some((c) => c.value === text)) {
+      } else if (
+        (field.type === 'dropdown' || field.type === 'font') &&
+        !choices.some((c) => c.value === text)
+      ) {
         // No choices configured means NOTHING is valid: the backend resolves the
-        // value with `choices?.find(...)` and rejects a miss.
-        errors[field.key] = `${field.label} must be one of the listed options`;
+        // value with `choices?.find(...)` and rejects a miss. A font field always
+        // arrives with its choices (the backend attaches the house list).
+        errors[field.key] =
+          field.type === 'font'
+            ? `${field.label} must be one of the listed fonts`
+            : `${field.label} must be one of the listed options`;
       }
     }
   }

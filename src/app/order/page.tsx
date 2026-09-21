@@ -41,6 +41,8 @@ import {
   fmtClock,
   getBusinessCalendar,
 } from '@/lib/business-calendar';
+import { fontStack, previewTextFor } from '@/lib/print-fonts';
+import { usePreviewFonts } from '@/lib/preview-fonts';
 
 /**
  * Paberin order form — 5-step wizard.
@@ -326,6 +328,9 @@ function OrderPageInner() {
   // payload builders send selectedOptions whenever optionFields exist.
   const hasLegacyOptions = (selectedService?.options?.length ?? 0) > 0 && !hasStructuredOptions;
   const optionErrors = validateOptionValues(selectedService?.optionFields, form.selectedOptions);
+  // Preview stylesheet only when this service actually offers fonts.
+  const offersFonts = (selectedService?.optionFields ?? []).some((f) => f.type === 'font');
+  usePreviewFonts(!customMode && offersFonts);
   const pickupParts = pickupTimeParts(form.requestedPickupTime);
   const pickupErrorMsg = form.requestedPickupTime ? pickupTimeError(form.requestedPickupTime, Date.now(), cal) : null;
   const optionSummary: string[] = [];
@@ -1039,6 +1044,59 @@ function OrderPageInner() {
                               {field.required ? ' *' : ''}
                             </label>
                           );
+                          if (model.kind === 'font') {
+                            // Each name is shown IN ITS OWN FACE — that is the
+                            // comparison the customer is here to make — and the
+                            // preview below re-renders as they type their text.
+                            const previewText = previewTextFor(selectedService?.optionFields, form.selectedOptions);
+                            return (
+                              <div key={field.key} className="space-y-2">
+                                {fieldLabel}
+                                <div
+                                  role="radiogroup"
+                                  aria-label={field.label}
+                                  className="grid grid-cols-2 sm:grid-cols-3 gap-2"
+                                >
+                                  {model.choices.map((c) => {
+                                    const selected = value === c.value;
+                                    return (
+                                      <button
+                                        key={c.value}
+                                        type="button"
+                                        role="radio"
+                                        aria-checked={selected}
+                                        onClick={() => updateOption(field.key, c.value)}
+                                        style={{ fontFamily: fontStack(c.value) }}
+                                        className={`card px-3 py-3 text-lg leading-tight text-left transition-all ${
+                                          selected ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]' : ''
+                                        }`}
+                                      >
+                                        {c.value}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {model.choices.some((c) => c.value === value) && (
+                                  <div className="border border-[#EAEAEA] bg-[#F7F7F7] px-4 py-5">
+                                    <p className="font-mono text-[10px] uppercase tracking-wider text-[#888888]">
+                                      Your text in {value}
+                                    </p>
+                                    <p
+                                      data-testid="font-preview"
+                                      style={{ fontFamily: fontStack(value) }}
+                                      className="mt-2 text-3xl sm:text-4xl leading-tight text-black break-words"
+                                    >
+                                      {previewText}
+                                    </p>
+                                    <p className="mt-2 text-xs text-[#888888]">
+                                      A guide, not a proof — your operator sets the final size and spacing.
+                                    </p>
+                                  </div>
+                                )}
+                                {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
+                              </div>
+                            );
+                          }
                           if (model.kind === 'select') {
                             // Choice grid when any choice has an image — thumbnails
                             // are only actually visible this way (a native <select>
