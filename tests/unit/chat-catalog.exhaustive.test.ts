@@ -101,6 +101,31 @@ const snapshotOf = (services: Service[]) => {
 
 /* ───────────────────── formatServiceLine boundaries ───────────────────── */
 
+describe('formatServiceLine — a font field reaches the model as a choice', () => {
+  it("lists the font choices instead of the bare word 'text'", () => {
+    // A font field described as plain text makes the model invent a font name,
+    // and the backend then rejects the whole order ("Invalid font … — valid: …").
+    const line = formatServiceLine(
+      svc({
+        type: 'paberin_topper',
+        label: 'Topper',
+        optionFields: [
+          {
+            key: 'fonts',
+            label: 'Font',
+            type: 'font',
+            choices: [{ value: 'Great Vibes' }, { value: 'Clarendon' }],
+            required: true,
+          },
+        ],
+      } as never),
+    );
+    expect(line).toContain('fonts=Great Vibes|Clarendon');
+    expect(line).toContain('REQUIRED');
+    expect(line).not.toContain('fonts=text');
+  });
+});
+
 describe('formatServiceLine — field boundaries', () => {
   it('starts with a digest bullet', () => {
     expect(formatServiceLine(MINIMAL)).toMatch(/^- /);
