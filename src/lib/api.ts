@@ -403,10 +403,17 @@ export const api = {
   getServices: () => apiFetch<Service[]>(`/api/services?brand=PABERIN`),
 
   /** Calculate a price quote. `body.brand` is forced to PABERIN. */
-  getQuote: (body: Record<string, unknown>) =>
+  /**
+   * Live price. `signal` lets the caller CANCEL a superseded request: the
+   * customer changes the quantity, the old request is still in flight, and
+   * without this a slow earlier answer can land AFTER a newer one and show the
+   * wrong price — as well as leaving several requests racing at once.
+   */
+  getQuote: (body: Record<string, unknown>, signal?: AbortSignal) =>
     apiFetch<QuoteResponse>('/api/services/quote', {
       method: 'POST',
       body: JSON.stringify({ ...body, brand: 'PABERIN' }),
+      ...(signal ? { signal } : {}),
     }),
 
   /** Create a new order. `body.brand` is forced to PABERIN. */

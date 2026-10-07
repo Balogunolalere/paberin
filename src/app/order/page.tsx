@@ -35,6 +35,7 @@ import {
   validateOptionValues,
   hasChoiceImages,
   paymentEmailFor,
+  type OrderItemInput,
 } from '@/lib/order-form';
 import {
   type BusinessCalendar,
@@ -72,7 +73,15 @@ type Step = 1 | 2 | 3 | 4 | 5;
  * ORDER, because there is one of each per order.
  */
 interface ExtraItem {
+  /** Catalog path. Empty when this line is a custom job instead. */
   serviceType: string;
+  /**
+   * Custom-job path for THIS line: the server runs the price rules on it
+   * ("cut my jeans" → fabric_custom). A job with no rule is refused by name —
+   * an unpriced job cannot join an order that is paid immediately.
+   */
+  customSpec?: { description: string; material?: string; dimensions?: string; complexity: string };
+  /** What the customer reads in the basket and on the review step. */
   serviceName: string;
   quantity: number;
   selectedVariant: string;
@@ -80,6 +89,20 @@ interface ExtraItem {
   /** Still base64 — uploaded per line at submit, so an abandoned basket leaves
    *  no orphaned files in Cloudinary. */
   files: { name: string; data: string }[];
+}
+
+/** One set-aside line as the API expects it. */
+function extraItemToLine(item: ExtraItem): OrderItemInput {
+  return {
+    ...(item.serviceType ? { serviceType: item.serviceType } : {}),
+    ...(item.customSpec ? { customSpec: item.customSpec } : {}),
+    quantity: item.quantity,
+    // Options belong to a catalog line; a custom job has none yet.
+    ...(item.serviceType && item.selectedVariant ? { selectedVariant: item.selectedVariant } : {}),
+    ...(item.serviceType && Object.keys(item.selectedOptions).length > 0
+      ? { selectedOptions: item.selectedOptions }
+      : {}),
+  };
 }
 
 interface FormState {
@@ -384,21 +407,35 @@ function OrderPageInner() {
   // The backend REQUIRES requestedPickupTime and complete option fields, so
   // we only call the engine when the form already satisfies the contract —
   // otherwise the request would 400 (REQUESTED_PICKUP_REQUIRED etc.).
+  /**
+   * The request currently in flight. A new quote CANCELS the previous one, so
+   * a slow earlier answer cannot land after a newer one and show a stale price,
+   * and the browser is not left holding several racing requests.
+   */
+  const quoteAbortRef = useRef<AbortController | null>(null);
+
+  /**
+   * There is nothing to quote. Drop any request still in flight and stop the
+   * spinner — otherwise an unanswered request leaves the price saying
+   * "Recalculating…" for good.
+   */
+  const dropQuote = useCallback(() => {
+    quoteAbortRef.current?.abort();
+    quoteAbortRef.current = null;
+    setQuoteLoading(false);
+    setQuote(null);
+  }, []);
+
   const fetchQuote = useCallback(async () => {
-    if (customMode) return; // custom jobs are priced by the team (QUOTING), not the engine
-    if (!form.serviceType || !form.quantity) return;
-    if (!isValidRequestedPickupTime(form.requestedPickupTime, Date.now(), cal)) {
-      setQuote(null);
-      return;
-    }
-    if (hasStructuredOptions && !optionErrors.valid) {
-      setQuote(null); // don't keep showing the previous service's price
-      return;
-    }
-    if (hasLegacyOptions && !form.selectedVariant) {
-      setQuote(null);
-      return;
-    }
+    if (customMode) { dropQuote(); return; } // custom jobs are priced by the team (QUOTING), not the engine
+    if (!form.serviceType || !form.quantity) { dropQuote(); return; }
+    if (!isValidRequestedPickupTime(form.requestedPickupTime, Date.now(), cal)) { dropQuote(); return; }
+    if (hasStructuredOptions && !optionErrors.valid) { dropQuote(); return; }  // don't keep the previous service's price
+    if (hasLegacyOptions && !form.selectedVariant) { dropQuote(); return; }
+    quoteAbortRef.current?.abort();
+    const controller = new AbortController();
+    quoteAbortRef.current = controller;
+
     setQuoteLoading(true);
     try {
       const q = await api.getQuote(
@@ -420,42 +457,50 @@ function OrderPageInner() {
           // The set-aside products are part of the order being priced. Quoting
           // only the line being typed would show a total the customer is not
           // going to pay — express is charged once for the WHOLE order.
-          ...(extraItems.length > 0 && !customMode
+          ...(extraItems.length > 0
             ? {
                 items: [
-                  ...extraItems.map((item) => ({
-                    serviceType: item.serviceType,
-                    quantity: item.quantity,
-                    selectedVariant: item.selectedVariant || undefined,
-                    selectedOptions:
-                      Object.keys(item.selectedOptions).length > 0 ? item.selectedOptions : undefined,
-                  })),
-                  ...(form.serviceType
+                  ...extraItems.map(extraItemToLine),
+                  ...((customMode && customDescription.trim()) || form.serviceType
                     ? [
-                        {
-                          serviceType: form.serviceType,
-                          quantity: form.quantity,
-                          selectedVariant: form.selectedVariant || undefined,
-                          selectedOptions:
-                            Object.keys(form.selectedOptions).length > 0
-                              ? form.selectedOptions
-                              : undefined,
-                        },
+                        customMode
+                          ? {
+                              customSpec: {
+                                description: customDescription.trim(),
+                                material: customMaterial.trim() || undefined,
+                                dimensions: customDimensions.trim() || undefined,
+                                complexity: 'simple',
+                              },
+                              quantity: form.quantity,
+                            }
+                          : {
+                              serviceType: form.serviceType,
+                              quantity: form.quantity,
+                              selectedVariant: form.selectedVariant || undefined,
+                              selectedOptions:
+                                Object.keys(form.selectedOptions).length > 0
+                                  ? form.selectedOptions
+                                  : undefined,
+                            },
                       ]
                     : []),
                 ],
               }
             : {}),
-        })
+        }),
+        controller.signal,
       );
+      if (controller.signal.aborted) return;   // a newer request already started
       setQuote(q);
     } catch (err: any) {
+      // An ABORT is us replacing this request, not a failure to report.
+      if (controller.signal.aborted) return;
       // Quote failures shouldn't block navigation — just clear the quote
       setQuote(null);
     } finally {
-      setQuoteLoading(false);
+      if (!controller.signal.aborted) setQuoteLoading(false);
     }
-  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, hasStructuredOptions, hasLegacyOptions, optionErrors.valid, customer?.isNew, cal, extraItems]);
+  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, hasStructuredOptions, hasLegacyOptions, optionErrors.valid, customer?.isNew, cal, extraItems, dropQuote]);
 
   useEffect(() => {
     if (step >= 2 && form.serviceType) {
@@ -599,18 +644,36 @@ function OrderPageInner() {
    *  fields so the next one can be configured. Customer details, pickup time and
    *  delivery stay put — they belong to the ORDER. */
   const addCurrentItemToOrder = () => {
-    if (!form.serviceType || customMode) return;
+    const isCustom = customMode && customDescription.trim().length > 0;
+    if (!isCustom && !form.serviceType) return;
+
     setExtraItems((prev) => [
       ...prev,
-      {
-        serviceType: form.serviceType,
-        serviceName: form.serviceName || form.serviceType,
-        quantity: form.quantity,
-        selectedVariant: form.selectedVariant,
-        selectedOptions: form.selectedOptions,
-        files: uploadFiles,
-      },
+      isCustom
+        ? {
+            serviceType: '',
+            customSpec: {
+              description: customDescription.trim(),
+              material: customMaterial.trim() || undefined,
+              dimensions: customDimensions.trim() || undefined,
+              complexity: 'simple',
+            },
+            serviceName: customDescription.trim() || 'Custom job',
+            quantity: form.quantity,
+            selectedVariant: '',
+            selectedOptions: {},
+            files: uploadFiles,
+          }
+        : {
+            serviceType: form.serviceType,
+            serviceName: form.serviceName || form.serviceType,
+            quantity: form.quantity,
+            selectedVariant: form.selectedVariant,
+            selectedOptions: form.selectedOptions,
+            files: uploadFiles,
+          },
     ]);
+
     setForm((prev) => ({
       ...prev,
       serviceType: '',
@@ -619,10 +682,20 @@ function OrderPageInner() {
       selectedVariant: '',
       selectedOptions: {},
     }));
+    if (isCustom) {
+      setCustomMode(false);
+      setCustomDescription('');
+      setCustomMaterial('');
+      setCustomDimensions('');
+    }
     setUploadFiles([]);
     setStep(1);
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
+
+  /** The thing being configured right now — a catalog service or a described job. */
+  const currentItemLabel = customMode ? customDescription.trim() : form.serviceName;
+  const canAddAnotherItem = customMode ? customDescription.trim().length > 0 : !!form.serviceType;
 
   const removeExtraItem = (index: number) => {
     setExtraItems((prev) => prev.filter((_, i) => i !== index));
@@ -682,15 +755,11 @@ function OrderPageInner() {
 
       // A grouped order uploads PER LINE: each product keeps its own artwork, so
       // the third logo's file is not lost behind the first.
-      const grouped = extraItems.length > 0 && !customMode;
+      const grouped = extraItems.length > 0;
       const groupedItems = grouped
         ? await Promise.all(
             extraItems.map(async (item) => ({
-              serviceType: item.serviceType,
-              quantity: item.quantity,
-              selectedVariant: item.selectedVariant || undefined,
-              selectedOptions:
-                Object.keys(item.selectedOptions).length > 0 ? item.selectedOptions : undefined,
+              ...extraItemToLine(item),
               ...(await uploadFilesFor(item.files)),
             })),
           )
@@ -721,16 +790,29 @@ function OrderPageInner() {
             ? [
                 ...groupedItems!,
                 {
-                  serviceType: form.serviceType,
+                  ...(customMode
+                    ? {
+                        customSpec: {
+                          description: customDescription.trim(),
+                          material: customMaterial.trim() || undefined,
+                          dimensions: customDimensions.trim() || undefined,
+                          complexity: 'simple',
+                        },
+                      }
+                    : {
+                        serviceType: form.serviceType,
+                        selectedVariant: form.selectedVariant || undefined,
+                        selectedOptions:
+                          Object.keys(form.selectedOptions).length > 0
+                            ? form.selectedOptions
+                            : undefined,
+                      }),
                   quantity: form.quantity,
-                  selectedVariant: form.selectedVariant || undefined,
-                  selectedOptions:
-                    Object.keys(form.selectedOptions).length > 0 ? form.selectedOptions : undefined,
                   ...(designFileUrl ? { designFileUrl } : {}),
                 },
               ]
             : undefined,
-          customSpec: customMode
+          customSpec: !grouped && customMode
             ? {
                 description: customDescription.trim(),
                 material: customMaterial.trim() || undefined,
@@ -1574,14 +1656,15 @@ function OrderPageInner() {
                     />
                   </div>
 
-                  {/* Buying more than one thing? Set this product aside and
-                      configure the next one — pickup, delivery and contact
-                      details stay put, because they belong to the ORDER. */}
-                  {!customMode && (
+                  {/* Buying more than one thing? Set this aside and configure
+                      the next one — pickup, delivery and contact details stay
+                      put, because they belong to the ORDER. Works for a described
+                      custom job too, which the server prices through its rules. */}
+                  {(
                     <button
                       type="button"
                       onClick={addCurrentItemToOrder}
-                      disabled={!form.serviceType}
+                      disabled={!canAddAnotherItem}
                       data-testid="order-add-another-item"
                       className="w-full text-left p-4 border border-dashed border-[#CCCCCC] bg-[#FAFAFA] hover:border-[#FF5C00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
@@ -1592,8 +1675,9 @@ function OrderPageInner() {
                             Add another product to this order
                           </div>
                           <div className="text-xs text-[#666666] mt-0.5 leading-relaxed">
-                            Another logo, a matching topper, a second size — all on one order and
-                            one payment.
+                            {customMode
+                              ? 'Keep this job on the order and add a catalog product beside it — one order, one payment.'
+                              : 'Another logo, a matching topper, a second size — all on one order and one payment.'}
                           </div>
                         </div>
                       </div>
@@ -1794,7 +1878,9 @@ function OrderPageInner() {
                             </li>
                           ))}
                           <li className="text-sm border-t border-[#E5E5E5] pt-2">
-                            <span className="font-bold text-black">{form.serviceName}</span>{' '}
+                            <span className="font-bold text-black">
+                              {customMode ? customDescription || 'Custom job' : form.serviceName}
+                            </span>{' '}
                             <span className="font-mono text-[#666666]">×{form.quantity}</span>
                             {optionSummary.length > 0 && (
                               <span className="block text-xs text-[#666666] mt-0.5">
