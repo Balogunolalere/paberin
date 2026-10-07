@@ -478,6 +478,29 @@ describe('grouped orders', () => {
     expect('quantity' in quote).toBe(false);
   });
 
+  test('a line can be a RULE-MATCHED custom job', () => {
+    // The server resolves customSpec through the price rules ("cut my jeans" →
+    // fabric_custom) and prices the matched service, so a custom job can share
+    // an order. A job with no rule is refused by name server-side.
+    const payload = buildOrderPayload({
+      service: null,
+      serviceType: '',
+      quantity: 1,
+      sla: 'Standard',
+      requestedPickupTime: '2026-12-31T10:00:00.000Z',
+      customerName: 'Ada',
+      customerPhone: '08033503068',
+      customerEmail: '',
+      items: [
+        { serviceType: 'paberin_printed_card', quantity: 3 },
+        { quantity: 1, customSpec: { description: 'cut my jeans', material: 'denim', complexity: 'simple' } },
+      ],
+    });
+    const items = payload.items as Record<string, unknown>[];
+    expect(items[1].customSpec).toEqual({ description: 'cut my jeans', material: 'denim', complexity: 'simple' });
+    expect('serviceType' in items[1]).toBe(false);
+  });
+
   test('a line never sends BOTH selectedOptions and selectedVariant', () => {
     const payload = buildOrderPayload({
       service: null,

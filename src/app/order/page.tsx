@@ -95,7 +95,7 @@ interface FormState {
   /** Structured optionFields values, keyed by field key. */
   selectedOptions: Record<string, string | number>;
   customerNotes: string;
-  deliveryMethod: 'PICKUP' | 'LOCAL_DELIVERY';
+  deliveryMethod: 'PICKUP' | 'LOCAL_DELIVERY' | 'NATIONWIDE_WAYBILL';
   deliveryAddress: string;
   referralCode: string;
   customerName: string;
@@ -266,7 +266,9 @@ function OrderPageInner() {
           sla: specs.sla === 'Express' ? 'Express' : 'Standard',
           ...(carried.selectedOptions ? { selectedOptions: carried.selectedOptions } : {}),
           ...(carried.selectedVariant ? { selectedVariant: carried.selectedVariant } : {}),
-          deliveryMethod: specs.delivery === 'LOCAL_DELIVERY' ? 'LOCAL_DELIVERY' : 'PICKUP',
+          deliveryMethod: (['LOCAL_DELIVERY', 'NATIONWIDE_WAYBILL'] as const).includes(specs.delivery as never)
+            ? (specs.delivery as FormState['deliveryMethod'])
+            : 'PICKUP',
           deliveryAddress: specs.delivery_address || prev.deliveryAddress,
           customerNotes: buildChatOrderNotes(specs, context) || prev.customerNotes,
           ...(pickupTime ? { requestedPickupTime: pickupTime } : {}),
@@ -409,7 +411,9 @@ function OrderPageInner() {
           selectedVariant: form.selectedVariant || undefined,
           selectedOptions: form.selectedOptions,
           deliveryMethod: form.deliveryMethod,
-          deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress.trim() || undefined : undefined,
+          deliveryAddress: form.deliveryMethod !== 'PICKUP' ? form.deliveryAddress.trim() || undefined : undefined,
+          // Distance only matters for the per-km Lagos rate; a waybill is a flat
+          // per-state fee.
           deliveryDistanceKm: form.deliveryMethod === 'LOCAL_DELIVERY' && form.deliveryAddress ? 10 : undefined,
           referralCode: form.referralCode || undefined,
           isFirstTimeCustomer: customer?.isNew || false,
@@ -510,7 +514,7 @@ function OrderPageInner() {
       return form.quantity > 0 && (uploadFiles.length > 0 || !!form.customerNotes);
     }
     if (step === 3) {
-      if (form.deliveryMethod === 'LOCAL_DELIVERY') return !!form.deliveryAddress.trim();
+      if (form.deliveryMethod !== 'PICKUP') return !!form.deliveryAddress.trim();
       return true;
     }
     if (step === 4) {
@@ -705,7 +709,7 @@ function OrderPageInner() {
           customerPhone: form.customerPhone,
           customerEmail: form.customerEmail,
           deliveryMethod: form.deliveryMethod,
-          deliveryAddress: form.deliveryMethod === 'LOCAL_DELIVERY' ? form.deliveryAddress : undefined,
+          deliveryAddress: form.deliveryMethod !== 'PICKUP' ? form.deliveryAddress : undefined,
           designFileUrl,
           // Customer notes contain ONLY the notes — file names travel in designFileUrl.
           customerNotes: form.customerNotes.trim() || undefined,
@@ -1608,11 +1612,11 @@ function OrderPageInner() {
                   Delivery preferences
                 </h2>
                 <p className="text-sm text-[#666666] mb-6">
-                  Pickup at our Ogba workshop or dispatch within Lagos.
+                  Pickup at our Ogba workshop, dispatch within Lagos, or send it nationwide.
                 </p>
 
                 <div className="space-y-6">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <button
                       onClick={() => update('deliveryMethod', 'PICKUP')}
                       className={`card text-left transition-all ${
@@ -1639,9 +1643,24 @@ function OrderPageInner() {
                         Lagos-wide dispatch. Fee calculated at checkout.
                       </p>
                     </button>
+                    {/* Same option the Skyal storefront offers — both brands share
+                        one backend, so the choices must not drift apart. */}
+                    <button
+                      onClick={() => update('deliveryMethod', 'NATIONWIDE_WAYBILL')}
+                      className={`card text-left transition-all ${
+                        form.deliveryMethod === 'NATIONWIDE_WAYBILL'
+                          ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]'
+                          : ''
+                      }`}
+                    >
+                      <p className="text-sm font-bold text-black">Nationwide waybill</p>
+                      <p className="text-xs text-[#666666] mt-1">
+                        2–5 days via GIG / RedStar. Fee by state.
+                      </p>
+                    </button>
                   </div>
 
-                  {form.deliveryMethod === 'LOCAL_DELIVERY' && (
+                  {form.deliveryMethod !== 'PICKUP' && (
                     <div className="space-y-2">
                       <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
                         <span className="text-[#FF5C00]">01</span> Delivery Address <span className="lowercase text-[10px]">(search or click the map)</span>

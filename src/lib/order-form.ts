@@ -381,10 +381,18 @@ function serviceOptionPayload(
  * products together.
  */
 export interface OrderItemInput {
-  serviceType: string;
+  /** Catalog path. Omit it to send a `customSpec` instead. */
+  serviceType?: string;
   quantity: number;
   selectedVariant?: string;
   selectedOptions?: Record<string, string | number>;
+  /**
+   * Custom-job path for THIS line — the server runs the rule lookup ("cut my
+   * jeans" → fabric_custom) and prices the matched service. A job with no price
+   * rule is refused by name, because an unpriced job cannot join a group that is
+   * paid immediately; that job belongs in its own order.
+   */
+  customSpec?: Record<string, unknown>;
   designFileUrl?: string;
   designFilePublicId?: string;
 }
@@ -423,16 +431,17 @@ function itemFileFields(item: OrderItemInput): Record<string, unknown> {
 /** One line as the API expects it. Options are mutually exclusive: the
  *  structured map wins, the legacy single value is the fallback. */
 function orderItemPayload(item: OrderItemInput): Record<string, unknown> {
-  return {
-    serviceType: item.serviceType,
-    quantity: item.quantity,
-    ...(item.selectedOptions && Object.keys(item.selectedOptions).length > 0
-      ? { selectedOptions: item.selectedOptions }
-      : item.selectedVariant
-        ? { selectedVariant: item.selectedVariant }
-        : {}),
-    ...itemFileFields(item),
-  };
+  const line: Record<string, unknown> = { quantity: item.quantity };
+  if (item.serviceType) {
+    line.serviceType = item.serviceType;
+    if (item.selectedOptions && Object.keys(item.selectedOptions).length > 0) {
+      line.selectedOptions = item.selectedOptions;
+    } else if (item.selectedVariant) {
+      line.selectedVariant = item.selectedVariant;
+    }
+  }
+  if (item.customSpec) line.customSpec = item.customSpec;
+  return { ...line, ...itemFileFields(item) };
 }
 
 /** Body for POST /api/services/quote (brand is added by api.getQuote). */
