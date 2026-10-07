@@ -1746,26 +1746,74 @@ function OrderPageInner() {
 
                 <div className="space-y-4">
                   <div className="card">
-                    <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">
-                      {customMode ? 'Custom job' : 'Service'}
-                    </p>
-                    <p className="text-base font-bold text-black">
-                      {customMode ? (customDescription || 'Custom job') : form.serviceName}
-                    </p>
-                    {customMode && (customMaterial || customDimensions) && (
-                      <p className="text-xs text-[#666666] mt-1">
-                        {[customMaterial, customDimensions].filter(Boolean).join(' · ')}
-                      </p>
+                    {extraItems.length > 0 ? (
+                      <>
+                        {/* EVERY product, not just the one being typed. This card
+                            used to name a single service while the Pay button
+                            charged for all of them — the customer saw one item
+                            and a bill for three. */}
+                        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">
+                          Products ({extraItems.length + 1})
+                        </p>
+                        <ul className="space-y-2">
+                          {extraItems.map((item, i) => (
+                            <li key={i} className="text-sm">
+                              <span className="font-bold text-black">{item.serviceName}</span>{' '}
+                              <span className="font-mono text-[#666666]">×{item.quantity}</span>
+                              {Object.keys(item.selectedOptions).length > 0 && (
+                                <span className="block text-xs text-[#666666] mt-0.5">
+                                  {Object.entries(item.selectedOptions)
+                                    .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
+                                    .join(' · ')}
+                                </span>
+                              )}
+                              {item.files.length > 0 && (
+                                <span className="block text-xs text-[#666666] mt-0.5">
+                                  {item.files.length} file{item.files.length > 1 ? 's' : ''}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                          <li className="text-sm border-t border-[#E5E5E5] pt-2">
+                            <span className="font-bold text-black">{form.serviceName}</span>{' '}
+                            <span className="font-mono text-[#666666]">×{form.quantity}</span>
+                            {optionSummary.length > 0 && (
+                              <span className="block text-xs text-[#666666] mt-0.5">
+                                {optionSummary.join(' · ')}
+                              </span>
+                            )}
+                          </li>
+                        </ul>
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888] mb-3">
+                          {customMode ? 'Custom job' : 'Service'}
+                        </p>
+                        <p className="text-base font-bold text-black">
+                          {customMode ? (customDescription || 'Custom job') : form.serviceName}
+                        </p>
+                        {customMode && (customMaterial || customDimensions) && (
+                          <p className="text-xs text-[#666666] mt-1">
+                            {[customMaterial, customDimensions].filter(Boolean).join(' · ')}
+                          </p>
+                        )}
+                        <p className="text-xs text-[#666666] mt-1">
+                          Qty {form.quantity} · {form.sla}
+                          {form.requestedPickupTime && (
+                            <> · Pickup {formatPickupLabel(form.requestedPickupTime)}</>
+                          )}
+                        </p>
+                        {optionSummary.length > 0 && (
+                          <p className="text-xs text-[#666666] mt-1">
+                            {optionSummary.join(' · ')}
+                          </p>
+                        )}
+                      </>
                     )}
-                    <p className="text-xs text-[#666666] mt-1">
-                      Qty {form.quantity} · {form.sla}
-                      {form.requestedPickupTime && (
-                        <> · Pickup {formatPickupLabel(form.requestedPickupTime)}</>
-                      )}
-                    </p>
-                    {optionSummary.length > 0 && (
-                      <p className="text-xs text-[#666666] mt-1">
-                        {optionSummary.join(' · ')}
+                    {extraItems.length > 0 && form.requestedPickupTime && (
+                      <p className="text-xs text-[#666666] mt-3">
+                        Pickup {formatPickupLabel(form.requestedPickupTime)}
                       </p>
                     )}
                   </div>
