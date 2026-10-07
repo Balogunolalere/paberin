@@ -368,6 +368,27 @@ function serviceOptionPayload(
   return {};
 }
 
+/**
+ * ONE product inside a multi-product order.
+ *
+ * A real order is often several products bought together: "this person wanted
+ * Ercos logo, wanted Letter K logo (4 pieces), wanted Technology Limited logo …
+ * it's supposed to be with the same order." Each line carries its OWN quantity,
+ * options and artwork — three logos are three files.
+ *
+ * Order-level things (pickup time, delivery, contact details) are deliberately
+ * NOT here: there is one of each per order, which is the point of buying the
+ * products together.
+ */
+export interface OrderItemInput {
+  serviceType: string;
+  quantity: number;
+  selectedVariant?: string;
+  selectedOptions?: Record<string, string | number>;
+  designFileUrl?: string;
+  designFilePublicId?: string;
+}
+
 export interface QuotePayloadInput {
   service?: Service | null;
   serviceType: string;
@@ -381,10 +402,59 @@ export interface QuotePayloadInput {
   deliveryDistanceKm?: number;
   referralCode?: string;
   isFirstTimeCustomer?: boolean;
+  /**
+   * Two or more products quoted together. When present the single-item fields
+   * are NOT sent — the backend answers 400 GROUP_MIXED_INPUT rather than guess
+   * which instruction was meant.
+   */
+  items?: OrderItemInput[];
+}
+
+/** Serialize one line's uploaded files the way the single-item path does. */
+function itemFileFields(item: OrderItemInput): Record<string, unknown> {
+  return item.designFileUrl
+    ? {
+        designFileUrl: item.designFileUrl,
+        ...(item.designFilePublicId ? { designFilePublicId: item.designFilePublicId } : {}),
+      }
+    : {};
+}
+
+/** One line as the API expects it. Options are mutually exclusive: the
+ *  structured map wins, the legacy single value is the fallback. */
+function orderItemPayload(item: OrderItemInput): Record<string, unknown> {
+  return {
+    serviceType: item.serviceType,
+    quantity: item.quantity,
+    ...(item.selectedOptions && Object.keys(item.selectedOptions).length > 0
+      ? { selectedOptions: item.selectedOptions }
+      : item.selectedVariant
+        ? { selectedVariant: item.selectedVariant }
+        : {}),
+    ...itemFileFields(item),
+  };
 }
 
 /** Body for POST /api/services/quote (brand is added by api.getQuote). */
 export function buildQuotePayload(input: QuotePayloadInput): Record<string, unknown> {
+  const grouped = Array.isArray(input.items) && input.items.length > 1;
+  if (grouped) {
+    // Quote the WHOLE basket: express is charged once for the order, so quoting
+    // one line would show a total the customer is not going to pay.
+    return {
+      items: input.items!.map(orderItemPayload),
+      requestedPickupTime: input.requestedPickupTime,
+      deliveryMethod: input.deliveryMethod,
+      ...(input.deliveryMethod === 'LOCAL_DELIVERY'
+        ? {
+            deliveryAddress: input.deliveryAddress || undefined,
+            deliveryDistanceKm: input.deliveryDistanceKm,
+          }
+        : {}),
+      ...(input.referralCode ? { referralCode: input.referralCode } : {}),
+      isFirstTimeCustomer: !!input.isFirstTimeCustomer,
+    };
+  }
   return {
     serviceType: input.serviceType,
     quantity: input.quantity,
@@ -408,6 +478,7 @@ export interface OrderPayloadInput extends QuotePayloadInput {
   customerPhone: string;
   customerEmail: string;
   customerNotes?: string;
+  /** The LAST line of a grouped order — the one being configured at submit. */
   designFileUrl?: string;
   customSpec?: {
     description: string;
@@ -419,25 +490,41 @@ export interface OrderPayloadInput extends QuotePayloadInput {
 
 /** Body for POST /api/orders (brand is added by api.createOrder). */
 export function buildOrderPayload(input: OrderPayloadInput): Record<string, unknown> {
+  const grouped = Array.isArray(input.items) && input.items.length > 1;
+
   const base: Record<string, unknown> = {
-    quantity: input.quantity,
-    sla: input.sla,
     requestedPickupTime: input.requestedPickupTime,
     customerName: input.customerName,
     customerPhone: input.customerPhone,
     customerEmail: input.customerEmail,
     deliveryMethod: input.deliveryMethod,
     ...(input.deliveryMethod === 'LOCAL_DELIVERY' ? { deliveryAddress: input.deliveryAddress } : {}),
-    ...(input.designFileUrl ? { designFileUrl: input.designFileUrl } : {}),
     ...(input.customerNotes ? { customerNotes: input.customerNotes } : {}),
     ...(input.referralCode ? { referralCode: input.referralCode } : {}),
     isFirstTimeCustomer: !!input.isFirstTimeCustomer,
   };
+
+  if (grouped) {
+    // A grouped order sends its LINES instead of a single service + quantity.
+    // The backend prices express ONCE for the order, so also sending
+    // `serviceType`/`quantity` would be two contradictory instructions (it
+    // answers 400 GROUP_MIXED_INPUT rather than guess).
+    //
+    // `base` carries no quantity/sla at all here — those belong to the lines.
+    return { ...base, items: input.items!.map(orderItemPayload) };
+  }
+
+  const single: Record<string, unknown> = {
+    ...base,
+    quantity: input.quantity,
+    sla: input.sla,
+    ...(input.designFileUrl ? { designFileUrl: input.designFileUrl } : {}),
+  };
   if (input.customSpec) {
-    return { ...base, customSpec: input.customSpec };
+    return { ...single, customSpec: input.customSpec };
   }
   return {
-    ...base,
+    ...single,
     serviceType: input.serviceType,
     ...serviceOptionPayload(input.service, input.selectedVariant, input.selectedOptions),
   };

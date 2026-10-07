@@ -62,6 +62,26 @@ import { usePreviewFonts } from '@/lib/preview-fonts';
 
 type Step = 1 | 2 | 3 | 4 | 5;
 
+/**
+ * One configured product set aside to be ordered together with others.
+ *
+ * The owner's case: "this person wanted Ercos logo, wanted Letter K logo
+ * (4 pieces), wanted Technology Limited logo … it's supposed to be with the
+ * same order." Each entry keeps its OWN quantity, options and files, because
+ * three logos are three files; pickup, delivery and contact details stay on the
+ * ORDER, because there is one of each per order.
+ */
+interface ExtraItem {
+  serviceType: string;
+  serviceName: string;
+  quantity: number;
+  selectedVariant: string;
+  selectedOptions: Record<string, string | number>;
+  /** Still base64 — uploaded per line at submit, so an abandoned basket leaves
+   *  no orphaned files in Cloudinary. */
+  files: { name: string; data: string }[];
+}
+
 interface FormState {
   serviceType: string;
   serviceName: string;
@@ -126,6 +146,8 @@ function OrderPageInner() {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [uploadFiles, setUploadFiles] = useState<{ name: string; data: string }[]>([]);
+  /** Products already added to this order (see ExtraItem). */
+  const [extraItems, setExtraItems] = useState<ExtraItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
@@ -391,6 +413,35 @@ function OrderPageInner() {
           deliveryDistanceKm: form.deliveryMethod === 'LOCAL_DELIVERY' && form.deliveryAddress ? 10 : undefined,
           referralCode: form.referralCode || undefined,
           isFirstTimeCustomer: customer?.isNew || false,
+          // The set-aside products are part of the order being priced. Quoting
+          // only the line being typed would show a total the customer is not
+          // going to pay — express is charged once for the WHOLE order.
+          ...(extraItems.length > 0 && !customMode
+            ? {
+                items: [
+                  ...extraItems.map((item) => ({
+                    serviceType: item.serviceType,
+                    quantity: item.quantity,
+                    selectedVariant: item.selectedVariant || undefined,
+                    selectedOptions:
+                      Object.keys(item.selectedOptions).length > 0 ? item.selectedOptions : undefined,
+                  })),
+                  ...(form.serviceType
+                    ? [
+                        {
+                          serviceType: form.serviceType,
+                          quantity: form.quantity,
+                          selectedVariant: form.selectedVariant || undefined,
+                          selectedOptions:
+                            Object.keys(form.selectedOptions).length > 0
+                              ? form.selectedOptions
+                              : undefined,
+                        },
+                      ]
+                    : []),
+                ],
+              }
+            : {}),
         })
       );
       setQuote(q);
@@ -400,7 +451,7 @@ function OrderPageInner() {
     } finally {
       setQuoteLoading(false);
     }
-  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, hasStructuredOptions, hasLegacyOptions, optionErrors.valid, customer?.isNew, cal]);
+  }, [customMode, form.serviceType, form.quantity, form.sla, form.deliveryMethod, form.deliveryAddress, form.referralCode, form.requestedPickupTime, form.selectedVariant, form.selectedOptions, selectedService, hasStructuredOptions, hasLegacyOptions, optionErrors.valid, customer?.isNew, cal, extraItems]);
 
   useEffect(() => {
     if (step >= 2 && form.serviceType) {
@@ -504,6 +555,75 @@ function OrderPageInner() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  /**
+   * Upload one line's files and return the payload fields for them.
+   *
+   * Extracted because a grouped order uploads PER LINE — three logos are three
+   * files — and the single-order columns never had room for that.
+   */
+  const uploadFilesFor = async (
+    list: { name: string; data: string }[],
+  ): Promise<{ designFileUrl?: string; designFilePublicId?: string }> => {
+    const MAX_FILE_SIZE = 10 * 1024 * 1024;
+    const uploaded: { url: string; publicId: string; name: string }[] = [];
+    for (const file of list) {
+      if (file.data.length > MAX_FILE_SIZE) continue;
+      try {
+        const API_URL2 = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
+        const uploadRes = await fetch(`${API_URL2}/api/upload`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: file.data, folder: 'paberin-designs' }),
+        });
+        const ct = uploadRes.headers.get('content-type') || '';
+        if (uploadRes.ok && ct.includes('application/json')) {
+          const uploadData = await uploadRes.json();
+          if (uploadData.data?.url) {
+            uploaded.push({ url: uploadData.data.url, publicId: uploadData.data.publicId || '', name: file.name });
+          }
+        }
+      } catch { /* individual upload failure is non-blocking */ }
+    }
+    if (uploaded.length === 0) return {};
+    return {
+      designFileUrl: JSON.stringify(uploaded.map((f) => ({ url: f.url, publicId: f.publicId, name: f.name }))),
+      designFilePublicId: uploaded.map((f) => f.publicId).filter(Boolean).join(',') || undefined,
+    };
+  };
+
+  /** Move the product being configured into the order and clear the product
+   *  fields so the next one can be configured. Customer details, pickup time and
+   *  delivery stay put — they belong to the ORDER. */
+  const addCurrentItemToOrder = () => {
+    if (!form.serviceType || customMode) return;
+    setExtraItems((prev) => [
+      ...prev,
+      {
+        serviceType: form.serviceType,
+        serviceName: form.serviceName || form.serviceType,
+        quantity: form.quantity,
+        selectedVariant: form.selectedVariant,
+        selectedOptions: form.selectedOptions,
+        files: uploadFiles,
+      },
+    ]);
+    setForm((prev) => ({
+      ...prev,
+      serviceType: '',
+      serviceName: '',
+      quantity: 1,
+      selectedVariant: '',
+      selectedOptions: {},
+    }));
+    setUploadFiles([]);
+    setStep(1);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const removeExtraItem = (index: number) => {
+    setExtraItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
   const submit = async () => {
     setError(null);
     // Defence in depth: the wizard's step gate should make this unreachable.
@@ -556,6 +676,22 @@ function OrderPageInner() {
         designFileUrl = JSON.stringify(uploadedFiles.map(f => ({ url: f.url, publicId: f.publicId, name: f.name })));
       }
 
+      // A grouped order uploads PER LINE: each product keeps its own artwork, so
+      // the third logo's file is not lost behind the first.
+      const grouped = extraItems.length > 0 && !customMode;
+      const groupedItems = grouped
+        ? await Promise.all(
+            extraItems.map(async (item) => ({
+              serviceType: item.serviceType,
+              quantity: item.quantity,
+              selectedVariant: item.selectedVariant || undefined,
+              selectedOptions:
+                Object.keys(item.selectedOptions).length > 0 ? item.selectedOptions : undefined,
+              ...(await uploadFilesFor(item.files)),
+            })),
+          )
+        : null;
+
       const order = await api.createOrder(
         buildOrderPayload({
           service: selectedService,
@@ -575,6 +711,21 @@ function OrderPageInner() {
           customerNotes: form.customerNotes.trim() || undefined,
           referralCode: form.referralCode || undefined,
           isFirstTimeCustomer: customer?.isNew || false,
+          // The current product becomes the LAST line — the earlier ones were
+          // already set aside, and the order the customer added them is kept.
+          items: grouped
+            ? [
+                ...groupedItems!,
+                {
+                  serviceType: form.serviceType,
+                  quantity: form.quantity,
+                  selectedVariant: form.selectedVariant || undefined,
+                  selectedOptions:
+                    Object.keys(form.selectedOptions).length > 0 ? form.selectedOptions : undefined,
+                  ...(designFileUrl ? { designFileUrl } : {}),
+                },
+              ]
+            : undefined,
           customSpec: customMode
             ? {
                 description: customDescription.trim(),
@@ -785,6 +936,54 @@ function OrderPageInner() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 lg:gap-12">
         {/* Main content */}
         <div className="lg:col-span-2">
+          {/* What is already in this order. Shown on EVERY step, because "what am
+              I actually buying" should never be a surprise on the last one. */}
+          {extraItems.length > 0 && (
+            <ScrollReveal>
+              <div className="mb-8 border border-[#E5E5E5] bg-[#FAFAFA] p-4" data-testid="order-items-panel">
+                <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-3">
+                  In this order ({extraItems.length + (form.serviceType ? 1 : 0)})
+                </div>
+                <ul className="space-y-2.5">
+                  {extraItems.map((item, i) => (
+                    <li key={i} className="flex items-start justify-between gap-3 text-sm">
+                      <div className="min-w-0">
+                        <div className="text-black">
+                          {item.serviceName}{' '}
+                          <span className="font-mono text-[#666666]">×{item.quantity}</span>
+                        </div>
+                        {Object.keys(item.selectedOptions).length > 0 && (
+                          <div className="text-xs text-[#666666] mt-0.5">
+                            {Object.entries(item.selectedOptions)
+                              .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`)
+                              .join(' · ')}
+                          </div>
+                        )}
+                        {item.files.length > 0 && (
+                          <div className="text-xs text-[#666666] mt-0.5">
+                            {item.files.length} file{item.files.length > 1 ? 's' : ''}
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeExtraItem(i)}
+                        className="text-[#666666] hover:text-[#FF5C00] shrink-0 text-xs underline"
+                        aria-label={`Remove ${item.serviceName}`}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 text-xs text-[#666666] leading-relaxed">
+                  One order, one payment, one delivery — and express is charged once for the whole
+                  order, not once per product.
+                </p>
+              </div>
+            </ScrollReveal>
+          )}
+
           {/* ──────── Step 1: Service ──────── */}
           {step === 1 && (
             <ScrollReveal>
@@ -1370,6 +1569,32 @@ function OrderPageInner() {
                       className="form-input resize-none"
                     />
                   </div>
+
+                  {/* Buying more than one thing? Set this product aside and
+                      configure the next one — pickup, delivery and contact
+                      details stay put, because they belong to the ORDER. */}
+                  {!customMode && (
+                    <button
+                      type="button"
+                      onClick={addCurrentItemToOrder}
+                      disabled={!form.serviceType}
+                      data-testid="order-add-another-item"
+                      className="w-full text-left p-4 border border-dashed border-[#CCCCCC] bg-[#FAFAFA] hover:border-[#FF5C00] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      <div className="flex items-center gap-3">
+                        <span className="text-[#FF5C00] font-bold text-lg leading-none">+</span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-black">
+                            Add another product to this order
+                          </div>
+                          <div className="text-xs text-[#666666] mt-0.5 leading-relaxed">
+                            Another logo, a matching topper, a second size — all on one order and
+                            one payment.
+                          </div>
+                        </div>
+                      </div>
+                    </button>
+                  )}
                 </div>
               </div>
             </ScrollReveal>

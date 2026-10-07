@@ -391,6 +391,115 @@ describe('buildQuotePayload', () => {
   })
 })
 
+/*
+ * Grouped orders — several products, one purchase.
+ *
+ * The owner's case: "this person wanted Ercos logo, wanted Letter K logo
+ * (4 pieces), wanted Technology Limited logo … it's supposed to be with the same
+ * order." The WIRE FORMAT is what matters here: the backend prices express ONCE
+ * for the order, so a payload that also carried `serviceType`/`quantity` would be
+ * two contradictory instructions (it answers 400 GROUP_MIXED_INPUT).
+ */
+describe('grouped orders', () => {
+  const lines = [
+    { serviceType: 'logo_print', quantity: 4, selectedOptions: { cake_size: '10 in' }, designFileUrl: 'https://cdn/ercos.png' },
+    { serviceType: 'logo_print', quantity: 5, selectedOptions: { cake_size: '10 in' }, designFileUrl: 'https://cdn/letterk.png' },
+    { serviceType: 'logo_print', quantity: 1, selectedOptions: { cake_size: '14 in' }, designFileUrl: 'https://cdn/tech.png' },
+  ];
+
+  test('sends items INSTEAD of serviceType/quantity', () => {
+    const payload = buildOrderPayload({
+      service: null,
+      serviceType: 'logo_print',
+      quantity: 1,
+      sla: 'Standard',
+      requestedPickupTime: '2026-12-31T10:00:00.000Z',
+      customerName: 'Feyikemi korede',
+      customerPhone: '08033503068',
+      customerEmail: '',
+      items: lines,
+    });
+    expect(payload.items).toHaveLength(3);
+    // The contradictory single-item fields must be ABSENT, not merely ignored.
+    expect('serviceType' in payload).toBe(false);
+    expect('quantity' in payload).toBe(false);
+    expect('sla' in payload).toBe(false);
+    // Order-level fields still travel once.
+    expect(payload.customerName).toBe('Feyikemi korede');
+    expect(payload.requestedPickupTime).toBe('2026-12-31T10:00:00.000Z');
+  });
+
+  test('gives each line its own quantity, options and artwork', () => {
+    const payload = buildOrderPayload({
+      service: null,
+      serviceType: '',
+      quantity: 1,
+      sla: 'Standard',
+      requestedPickupTime: '2026-12-31T10:00:00.000Z',
+      customerName: 'Ada',
+      customerPhone: '08033503068',
+      customerEmail: '',
+      items: lines,
+    });
+    const items = payload.items as Record<string, unknown>[];
+    expect(items[0]).toMatchObject({ serviceType: 'logo_print', quantity: 4, designFileUrl: 'https://cdn/ercos.png' });
+    expect(items[2]).toMatchObject({ quantity: 1, selectedOptions: { cake_size: '14 in' } });
+  });
+
+  test('ONE item is not a group — the single-item shape is unchanged', () => {
+    const payload = buildOrderPayload({
+      service: null,
+      serviceType: 'logo_print',
+      quantity: 3,
+      sla: 'Express',
+      requestedPickupTime: '2026-12-31T10:00:00.000Z',
+      customerName: 'Ada',
+      customerPhone: '08033503068',
+      customerEmail: '',
+      items: [lines[0]],
+    });
+    expect('items' in payload).toBe(false);
+    expect(payload.serviceType).toBe('logo_print');
+    expect(payload.quantity).toBe(3);
+    expect(payload.sla).toBe('Express');
+  });
+
+  test('a grouped QUOTE prices the whole basket the same way', () => {
+    const quote = buildQuotePayload({
+      service: null,
+      serviceType: '',
+      quantity: 1,
+      sla: 'Standard',
+      requestedPickupTime: '2026-12-31T10:00:00.000Z',
+      items: lines,
+    });
+    expect(quote.items).toHaveLength(3);
+    expect('serviceType' in quote).toBe(false);
+    expect('quantity' in quote).toBe(false);
+  });
+
+  test('a line never sends BOTH selectedOptions and selectedVariant', () => {
+    const payload = buildOrderPayload({
+      service: null,
+      serviceType: '',
+      quantity: 1,
+      sla: 'Standard',
+      requestedPickupTime: '2026-12-31T10:00:00.000Z',
+      customerName: 'Ada',
+      customerPhone: '08033503068',
+      customerEmail: '',
+      items: [
+        { serviceType: 'a', quantity: 1, selectedOptions: { k: 'v' }, selectedVariant: 'legacy' },
+        { serviceType: 'b', quantity: 1, selectedVariant: 'Gold' },
+      ],
+    });
+    const items = payload.items as Record<string, unknown>[];
+    expect(items[0].selectedOptions).toEqual({ k: 'v' });
+    expect('selectedVariant' in items[0]).toBe(false);
+    expect(items[1].selectedVariant).toBe('Gold');
+  });
+});
+
 describe('buildOrderPayload', () => {
   const customer = {
     customerName: 'Ada Obi',
