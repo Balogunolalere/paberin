@@ -120,6 +120,12 @@ export interface OptionField {
   min?: number;
   max?: number;
   maxLength?: number;
+  /** number only — allow a decimal (layer thicknesses are 1.5in). */
+  decimals?: boolean;
+  /** Set when this value is DERIVED from two other number fields, not asked. */
+  compute?: { multiply: [string, string] };
+  /** NUMBER field only — price steps ("up to 8 → +₦0"). */
+  bands?: { upTo: number; priceDelta?: number }[];
   /** "Show only when" — the sibling field this one waits on, and the answers. */
   showIf?: { key: string; in: string[] };
 }

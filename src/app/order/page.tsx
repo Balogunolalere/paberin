@@ -32,6 +32,7 @@ import {
   formatPickupLabel,
   optionInputModel,
   visibleOptionFields,
+  derivedValue,
   summarizeOptionErrors,
   validateOptionValues,
   hasChoiceImages,
@@ -1503,6 +1504,27 @@ function OrderPageInner() {
                               </div>
                             );
                           }
+                          if (model.kind === 'computed') {
+                            // CALCULATED, not asked. The customer reads the result
+                            // and the server stores it — nothing here to fill in.
+                            const derived = derivedValue(field, form.selectedOptions);
+                            return (
+                              <div key={field.key} className="space-y-1">
+                                <label className="text-xs font-medium text-black">{model.label}</label>
+                                <div className="form-input flex items-center justify-between bg-[#FAFAFA] text-[#666666]">
+                                  <span data-testid={`computed-${field.key}`}>
+                                    {derived === null ? '—' : derived}
+                                  </span>
+                                  <span className="text-[10px] uppercase tracking-wider text-[#999999]">calculated</span>
+                                </div>
+                                <p className="text-[11px] text-[#888888]">
+                                  {derived === null
+                                    ? 'Fill in the fields above to see this.'
+                                    : 'Worked out from your answers above — no need to enter it.'}
+                                </p>
+                              </div>
+                            );
+                          }
                           if (model.kind === 'number') {
                             return (
                               <div key={field.key} className="space-y-1">
@@ -1511,6 +1533,7 @@ function OrderPageInner() {
                                   type="number"
                                   min={model.min}
                                   max={model.max}
+                                  step={model.step}
                                   value={value}
                                   onChange={(e) => updateOption(field.key, e.target.value)}
                                   className="form-input"

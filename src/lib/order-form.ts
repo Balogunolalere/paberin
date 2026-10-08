@@ -169,7 +169,7 @@ export function formatPickupLabel(value: string): string {
 
 /* ───────────────────────────── Service options ───────────────────────────── */
 
-export type OptionInputKind = 'select' | 'font' | 'text' | 'textarea' | 'number';
+export type OptionInputKind = 'select' | 'font' | 'text' | 'textarea' | 'number' | 'computed';
 
 /** Normalized dropdown choice — `choice.value` is what gets submitted. */
 export interface NormalizedOptionChoice {
@@ -208,6 +208,10 @@ export interface OptionInputModel {
   min?: number;
   max?: number;
   maxLength?: number;
+  /** number only — steps at 0.01 (a layer thickness is 1.5in, not 1.4999in). */
+  step?: number;
+  /** computed only — the two fields multiplied to produce this one. */
+  compute?: [string, string];
 }
 
 /**
@@ -218,7 +222,7 @@ export interface OptionInputModel {
  * A field whose decisive answer is missing is NOT asked: nothing has been chosen
  * yet, so nothing depends on it.
  */
-export function isFieldVisible(
+export function isFieldShown(
   field: { showIf?: { key: string; in: string[] } },
   selected: Record<string, unknown> | undefined,
 ): boolean {
@@ -228,12 +232,43 @@ export function isFieldVisible(
   return field.showIf.in.includes(String(raw).trim());
 }
 
-/** The fields a customer is actually asked, in order. */
+/**
+ * Is this field ASKED? A derived field is never asked — it is SHOWN so the
+ * customer can read the number — which is why rendering uses `isFieldShown` and
+ * validation uses this. Mirrors the server exactly.
+ */
+export function isFieldVisible(
+  field: { showIf?: { key: string; in: string[] }; compute?: unknown },
+  selected: Record<string, unknown> | undefined,
+): boolean {
+  if (field.compute) return false;
+  return isFieldShown(field, selected);
+}
+
+/**
+ * The fields to RENDER, in order — derived ones included, because the customer
+ * should see the height their order works out to.
+ */
 export function visibleOptionFields(
   fields: OptionField[] | null | undefined,
   selected: Record<string, unknown> | undefined,
 ): OptionField[] {
-  return (fields ?? []).filter((f) => isFieldVisible(f, selected));
+  return (fields ?? []).filter((f) => isFieldShown(f, selected));
+}
+
+/**
+ * The product a derived field stands for, or null until both its inputs are
+ * known. Same arithmetic as the server, so the number shown is the number stored.
+ */
+export function derivedValue(
+  field: { compute?: { multiply: [string, string] } },
+  values: Record<string, string | number> | undefined,
+): number | null {
+  if (!field.compute) return null;
+  const a = Number(values?.[field.compute.multiply[0]]);
+  const b = Number(values?.[field.compute.multiply[1]]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
+  return Math.round(a * b * 100) / 100;
 }
 
 /** Map a backend OptionField to the input element it renders as. */
@@ -243,12 +278,15 @@ export function optionInputModel(field: OptionField): OptionInputModel {
     label: field.label,
     // A font field is its own input kind: a picker that renders each name in
     // its own face, plus a live preview of the customer's text.
-    kind: field.type === 'dropdown' ? 'select' : field.type,
+    // A derived field renders as a read-only number, never an input.
+    kind: field.compute ? 'computed' : field.type === 'dropdown' ? 'select' : field.type,
     required: !!field.required,
     choices: normalizeChoices(field.choices),
     min: typeof field.min === 'number' ? field.min : undefined,
     max: typeof field.max === 'number' ? field.max : undefined,
     maxLength: typeof field.maxLength === 'number' ? field.maxLength : undefined,
+    step: field.decimals ? 0.01 : 1,
+    compute: field.compute ? [...field.compute.multiply] as [string, string] : undefined,
   };
 }
 
@@ -265,8 +303,11 @@ export function validateOptionValues(
 ): OptionValidation {
   const errors: Record<string, string> = {};
   // A hidden field is not asked, so it is not validated — otherwise "Single cake"
-  // is blocked by an unanswered "How many tiers?" that is not on screen.
+  // is blocked by an unanswered "How many tiers?" that is not on screen. A
+  // DERIVED field is shown but never asked, so it is skipped too: it has no input
+  // for anyone to get wrong, and the server computes it.
   for (const field of visibleOptionFields(fields, values)) {
+    if (field.compute) continue;
     const raw = values?.[field.key];
     const text = raw === undefined || raw === null ? '' : String(raw).trim();
     const choices = normalizeChoices(field.choices);
@@ -277,9 +318,14 @@ export function validateOptionValues(
     if (!text) continue;
     if (field.type === 'number') {
       const n = Number(text);
-      // The backend demands a WHOLE number (`Number.isInteger`), not merely a
-      // finite one — "2.5" is rejected there, so it must not pass here.
-      if (!Number.isInteger(n)) errors[field.key] = `${field.label} must be a whole number`;
+      // Whole numbers unless the admin allowed decimals (a layer thickness is
+      // 1.5in). Mirrors the backend, which rounds to 2 places.
+      const ok = field.decimals ? Number.isFinite(n) : Number.isInteger(n);
+      if (!ok) {
+        errors[field.key] = field.decimals
+          ? `${field.label} must be a number`
+          : `${field.label} must be a whole number`;
+      }
       else if (typeof field.min === 'number' && n < field.min)
         errors[field.key] = `${field.label} must be at least ${field.min}`;
       else if (typeof field.max === 'number' && n > field.max)
