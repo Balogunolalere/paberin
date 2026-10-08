@@ -31,6 +31,7 @@ import {
   lagosDateISO,
   formatPickupLabel,
   optionInputModel,
+  visibleOptionFields,
   summarizeOptionErrors,
   validateOptionValues,
   hasChoiceImages,
@@ -383,19 +384,28 @@ function OrderPageInner() {
   // Structured option validation (required / min / max / maxLength / choices)
   // and the pickup picker's date/time parts — both derived fresh each render.
   const hasStructuredOptions = (selectedService?.optionFields?.length ?? 0) > 0;
+
+  /**
+   * The fields a customer is actually ASKED, given the answers so far. The list
+   * shrinks and grows as they choose — picking "Single cake" hides the tier
+   * questions, which the server then ignores entirely. One list, used by the
+   * renderer, the validator, the preview and the summary, so the four cannot
+   * disagree about what was asked.
+   */
+  const visibleFields = visibleOptionFields(selectedService?.optionFields, form.selectedOptions);
   // Legacy dropdown only applies when there are NO structured fields — the
   // payload builders send selectedOptions whenever optionFields exist.
   const hasLegacyOptions = (selectedService?.options?.length ?? 0) > 0 && !hasStructuredOptions;
   const optionErrors = validateOptionValues(selectedService?.optionFields, form.selectedOptions);
   // Preview stylesheet only when this service actually offers fonts.
-  const offersFonts = (selectedService?.optionFields ?? []).some((f) => f.type === 'font');
+  const offersFonts = visibleFields.some((f) => f.type === 'font');
   usePreviewFonts(!customMode && offersFonts);
   const pickupParts = pickupTimeParts(form.requestedPickupTime);
   const pickupErrorMsg = form.requestedPickupTime ? pickupTimeError(form.requestedPickupTime, Date.now(), cal) : null;
   const optionSummary: string[] = [];
   if (!customMode) {
     if (form.selectedVariant) optionSummary.push(form.selectedVariant);
-    for (const field of selectedService?.optionFields ?? []) {
+    for (const field of visibleFields) {
       const v = form.selectedOptions[field.key];
       if (v !== undefined && v !== null && String(v).trim() !== '') {
         optionSummary.push(`${field.label}: ${String(v).trim()}`);
@@ -1341,7 +1351,7 @@ function OrderPageInner() {
                         <span className="text-[#FF5C00]">03</span> Options
                       </label>
                       <div className="space-y-4">
-                        {selectedService.optionFields.map((field) => {
+                        {visibleFields.map((field) => {
                           const model = optionInputModel(field);
                           const raw = form.selectedOptions[field.key];
                           const value = raw === undefined || raw === null ? '' : String(raw);

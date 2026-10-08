@@ -120,6 +120,8 @@ export interface OptionField {
   min?: number;
   max?: number;
   maxLength?: number;
+  /** "Show only when" — the sibling field this one waits on, and the answers. */
+  showIf?: { key: string; in: string[] };
 }
 
 export interface Service {
