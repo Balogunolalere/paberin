@@ -85,6 +85,8 @@ interface ExtraItem {
   customSpec?: { description: string; material?: string; dimensions?: string; complexity: string };
   /** What the customer reads in the basket and on the review step. */
   serviceName: string;
+  /** What the customer calls this piece — "Cake 1". Lines sharing one are one cake. */
+  groupLabel?: string;
   quantity: number;
   selectedVariant: string;
   selectedOptions: Record<string, string | number>;
@@ -96,6 +98,7 @@ interface ExtraItem {
 /** One set-aside line as the API expects it. */
 function extraItemToLine(item: ExtraItem): OrderItemInput {
   return {
+    ...(item.groupLabel?.trim() ? { groupLabel: item.groupLabel.trim() } : {}),
     ...(item.serviceType ? { serviceType: item.serviceType } : {}),
     ...(item.customSpec ? { customSpec: item.customSpec } : {}),
     quantity: item.quantity,
@@ -173,6 +176,12 @@ function OrderPageInner() {
   const [uploadFiles, setUploadFiles] = useState<{ name: string; data: string }[]>([]);
   /** Products already added to this order (see ExtraItem). */
   const [extraItems, setExtraItems] = useState<ExtraItem[]>([]);
+  /**
+   * What the customer calls the line they are configuring. Only meaningful once
+   * the order has more than one line — a lone line is already one piece — so it
+   * is sent as the first item's label in the group path.
+   */
+  const [currentGroupLabel, setCurrentGroupLabel] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   /**
@@ -476,6 +485,7 @@ function OrderPageInner() {
                     ? [
                         customMode
                           ? {
+                              ...(currentGroupLabel.trim() ? { groupLabel: currentGroupLabel.trim() } : {}),
                               customSpec: {
                                 description: customDescription.trim(),
                                 material: customMaterial.trim() || undefined,
@@ -485,6 +495,7 @@ function OrderPageInner() {
                               quantity: form.quantity,
                             }
                           : {
+                              ...(currentGroupLabel.trim() ? { groupLabel: currentGroupLabel.trim() } : {}),
                               serviceType: form.serviceType,
                               quantity: form.quantity,
                               selectedVariant: form.selectedVariant || undefined,
@@ -712,6 +723,10 @@ function OrderPageInner() {
     setExtraItems((prev) => prev.filter((_, i) => i !== index));
   };
 
+  const setExtraItemGroupLabel = (index: number, groupLabel: string) => {
+    setExtraItems((prev) => prev.map((it, i) => (i === index ? { ...it, groupLabel } : it)));
+  };
+
   const submit = async () => {
     setError(null);
     // Defence in depth: the wizard's step gate should make this unreachable.
@@ -819,6 +834,7 @@ function OrderPageInner() {
                             : undefined,
                       }),
                   quantity: form.quantity,
+                  ...(currentGroupLabel.trim() ? { groupLabel: currentGroupLabel.trim() } : {}),
                   ...(designFileUrl ? { designFileUrl } : {}),
                 },
               ]
@@ -1041,6 +1057,26 @@ function OrderPageInner() {
                 <div className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-3">
                   In this order ({extraItems.length + (form.serviceType ? 1 : 0)})
                 </div>
+                {/* The piece being configured is part of the order too, so it can
+                    be named the same as the lines it belongs with. */}
+                {(form.serviceType || currentItemLabel) && (
+                  <div className="mb-3 border-b border-[#E5E5E5] pb-3">
+                    <div className="text-sm text-black">
+                      {currentItemLabel || form.serviceType}{' '}
+                      <span className="font-mono text-[#666666]">×{form.quantity}</span>
+                      <span className="ml-2 font-mono text-[10px] uppercase tracking-wider text-[#999999]">editing</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={currentGroupLabel}
+                      maxLength={60}
+                      placeholder="Name this piece (e.g. Cake 1)"
+                      aria-label="Name for the piece you are editing"
+                      onChange={(e) => setCurrentGroupLabel(e.target.value)}
+                      className="mt-1.5 w-full max-w-[240px] border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-black"
+                    />
+                  </div>
+                )}
                 <ul className="space-y-2.5">
                   {extraItems.map((item, i) => (
                     <li key={i} className="flex items-start justify-between gap-3 text-sm">
@@ -1061,6 +1097,17 @@ function OrderPageInner() {
                             {item.files.length} file{item.files.length > 1 ? 's' : ''}
                           </div>
                         )}
+                        {/* Name the piece so the workshop knows two lines are one
+                            cake — the customer already talks this way. */}
+                        <input
+                          type="text"
+                          value={item.groupLabel ?? ''}
+                          maxLength={60}
+                          placeholder="Name this piece (e.g. Cake 1)"
+                          aria-label={`Name for ${item.serviceName}`}
+                          onChange={(e) => setExtraItemGroupLabel(i, e.target.value)}
+                          className="mt-1.5 w-full max-w-[240px] border border-[#E5E5E5] bg-white px-2 py-1 text-xs text-black"
+                        />
                       </div>
                       <button
                         type="button"

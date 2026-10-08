@@ -469,6 +469,12 @@ export interface OrderItemInput {
   customSpec?: Record<string, unknown>;
   designFileUrl?: string;
   designFilePublicId?: string;
+  /**
+   * What the CUSTOMER calls this piece — "Cake 1". A six-tier cake is six lines
+   * but one cake, and the workshop must not cut six pieces. Lines sharing a label
+   * are read as one workpiece; it prices nothing.
+   */
+  groupLabel?: string;
 }
 
 export interface QuotePayloadInput {
