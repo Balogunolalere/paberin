@@ -4,7 +4,16 @@ import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { ScrollReveal } from '@/components/ScrollReveal';
 import { api, formatNaira, type Service, type QuoteBreakdown } from '@/lib/api';
-import { defaultRequestedPickupTime } from '@/lib/order-form';
+import {
+  defaultRequestedPickupTime,
+  derivedValue,
+  normalizeChoices,
+  optionInputModel,
+  summarizeOptionErrors,
+  validateOptionValues,
+  visibleOptionFields,
+} from '@/lib/order-form';
+import { groupServices } from '@/lib/service-groups';
 import { getBusinessCalendar } from '@/lib/business-calendar';
 
 /**
@@ -13,6 +22,13 @@ import { getBusinessCalendar } from '@/lib/business-calendar';
  * Fetches the active PABERIN services, lets the visitor pick a service,
  * quantity, SLA, and delivery option, then calls `api.getQuote` for a
  * full breakdown. No login required.
+ *
+ * It MUST ask for the service's options. Almost every topper needs a colour, a
+ * message and a font, so a calculator that quotes without them could only ever
+ * get "Option "Colour" is required" back from the engine — the price of any
+ * real product was uncquotable here. The fields below are the same ones the
+ * order form asks, from the same helpers, so the two can never disagree about
+ * what a service requires.
  */
 
 type DeliveryOption = 'pickup' | 'local' | 'nationwide' | '';
@@ -40,6 +56,9 @@ export default function CalculatorPage() {
   const [quantity, setQuantity] = useState(1);
   const [sla, setSla] = useState<Sla>('Standard');
   const [delivery, setDelivery] = useState<DeliveryOption>('');
+  /** The service's own answers — required by the engine for most services. */
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string | number>>({});
+  const [optionErrors, setOptionErrors] = useState<Record<string, string>>({});
 
   const [breakdown, setBreakdown] = useState<QuoteBreakdown | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -84,6 +103,16 @@ export default function CalculatorPage() {
       setQuoteError('Pick a service first.');
       return;
     }
+    // Ask before quoting, so a missing colour reads as a form problem rather
+    // than a server error the customer cannot act on.
+    const check = validateOptionValues(selectedService?.optionFields, selectedOptions);
+    if (!check.valid) {
+      setOptionErrors(check.errors);
+      setQuoteError(summarizeOptionErrors(check.errors));
+      setSearched(true);
+      return;
+    }
+    setOptionErrors({});
     setQuoteLoading(true);
     setQuoteError(null);
     setSearched(true);
@@ -92,6 +121,7 @@ export default function CalculatorPage() {
         serviceType,
         quantity: Math.max(1, quantity || 1),
         sla,
+        ...(Object.keys(selectedOptions).length > 0 ? { selectedOptions } : {}),
         // The backend REQUIRES requestedPickupTime on every quote. The
         // calculator has no date picker — use the standard default slot
         // (now + 2 working days, one hour before closing — 16:00 Lagos by
@@ -166,13 +196,23 @@ export default function CalculatorPage() {
                   <select
                     id="serviceType"
                     value={serviceType}
-                    onChange={(e) => setServiceType(e.target.value)}
+                    onChange={(e) => {
+                      setServiceType(e.target.value);
+                      // Options belong to a service — carrying them over would
+                      // send another product's answers.
+                      setSelectedOptions({});
+                      setOptionErrors({});
+                    }}
                     className="form-input"
                   >
-                    {services.map((s) => (
-                      <option key={s.id} value={s.type}>
-                        {s.label} — {formatNaira(s.basePriceNaira)}/{s.unit || 'unit'}
-                      </option>
+                    {groupServices(services).map((group) => (
+                      <optgroup key={group.category} label={group.label}>
+                        {group.services.map((s) => (
+                          <option key={s.id} value={s.type}>
+                            {s.label} — {formatNaira(s.basePriceNaira)}/{s.unit || 'unit'}
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
                 )}
@@ -187,6 +227,103 @@ export default function CalculatorPage() {
                   </p>
                 ) : null}
               </div>
+
+              {/* The service's OWN options. Without these the quote is refused
+                  ("Option \"Colour\" is required") for every real topper. */}
+              {selectedService &&
+                (selectedService.optionFields?.length ?? 0) > 0 &&
+                visibleOptionFields(selectedService.optionFields, selectedOptions).length > 0 && (
+                  <div className="space-y-3" data-testid="calculator-options">
+                    <span className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
+                      Options
+                    </span>
+                    {visibleOptionFields(selectedService.optionFields, selectedOptions).map((field) => {
+                      const model = optionInputModel(field);
+                      const value = selectedOptions[field.key] ?? '';
+                      const err = optionErrors[field.key];
+                      const set = (v: string | number) =>
+                        setSelectedOptions((prev) => ({ ...prev, [field.key]: v }));
+                      return (
+                        <div key={field.key} className="space-y-1">
+                          <label
+                            htmlFor={`calc-option-${field.key}`}
+                            className="text-xs font-medium text-black"
+                          >
+                            {model.label}
+                            {model.required && <span className="text-[#FF5C00]"> *</span>}
+                          </label>
+
+                          {model.kind === 'select' && (
+                            <select
+                              id={`calc-option-${field.key}`}
+                              value={String(value)}
+                              onChange={(e) => set(e.target.value)}
+                              className="form-input"
+                            >
+                              <option value="">Select…</option>
+                              {model.choices.map((c) => (
+                                <option key={c.value} value={c.value}>
+                                  {c.value}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          {model.kind === 'font' && (
+                            <select
+                              id={`calc-option-${field.key}`}
+                              value={String(value)}
+                              onChange={(e) => set(e.target.value)}
+                              className="form-input"
+                            >
+                              <option value="">Select…</option>
+                              {normalizeChoices(field.choices).map((c) => (
+                                <option key={c.value} value={c.value}>
+                                  {c.value}
+                                </option>
+                              ))}
+                            </select>
+                          )}
+
+                          {(model.kind === 'text' || model.kind === 'textarea') && (
+                            <input
+                              id={`calc-option-${field.key}`}
+                              type="text"
+                              value={String(value)}
+                              maxLength={model.maxLength}
+                              onChange={(e) => set(e.target.value)}
+                              className="form-input"
+                            />
+                          )}
+
+                          {model.kind === 'number' && (
+                            <input
+                              id={`calc-option-${field.key}`}
+                              type="number"
+                              value={String(value)}
+                              min={model.min}
+                              max={model.max}
+                              step={model.step}
+                              onChange={(e) => set(e.target.value)}
+                              className="form-input"
+                            />
+                          )}
+
+                          {model.kind === 'computed' && (
+                            <div className="form-input flex items-center justify-between bg-[#FAFAFA] text-[#666666]">
+                              <span data-testid={`calc-computed-${field.key}`}>
+                                {derivedValue(field, selectedOptions) ?? '—'}
+                              </span>
+                              <span className="text-[10px] uppercase tracking-wider text-[#999999]">calculated</span>
+                            </div>
+                          )}
+
+                          {err && <p className="text-xs text-[#E05200]">{err}</p>}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
               {/* Quantity */}
               <div className="space-y-2">

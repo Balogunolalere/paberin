@@ -8,6 +8,7 @@ import { AvailabilityLine } from '@/components/AvailabilityLine';
 import { AddressPicker } from '@/components/AddressPicker';
 import { DesignFileThumbs } from '@/components/DesignFilePreview';
 import { usePaberinAuth } from '@/lib/auth';
+import { groupServices } from '@/lib/service-groups';
 import {
   api,
   formatNaira,
@@ -1182,7 +1183,17 @@ function OrderPageInner() {
                       </button>
                     </div>
                   ) : (
-                    services.map((s) => (
+                    groupServices(services).map((group) => (
+                      <div key={group.category} className="col-span-full">
+                        <p
+                          className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#888888] mt-2 mb-2"
+                          data-testid={`service-group-${group.category}`}
+                        >
+                          {group.label}
+                          <span className="text-[#BBBBBB]"> · {group.services.length}</span>
+                        </p>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          {group.services.map((s) => (
                       <button
                         key={s.id}
                         onClick={() => selectService(s)}
@@ -1213,7 +1224,10 @@ function OrderPageInner() {
                             <span className="text-[#FF5C00]">Express available</span>
                           )}
                         </div>
-                      </button>
+                              </button>
+                          ))}
+                        </div>
+                      </div>
                     ))
                   )}
                 </div>
