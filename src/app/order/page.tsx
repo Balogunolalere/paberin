@@ -8,6 +8,7 @@ import { AvailabilityLine } from '@/components/AvailabilityLine';
 import { AddressPicker } from '@/components/AddressPicker';
 import { DesignFileThumbs } from '@/components/DesignFilePreview';
 import { usePaberinAuth } from '@/lib/auth';
+import { noteList } from '@/lib/quote-notes';
 import { groupServices } from '@/lib/service-groups';
 import {
   api,
@@ -2154,6 +2155,21 @@ function OrderPageInner() {
                         </div>
                       ) : null}
                     </div>
+                  )}
+
+                  {/* Why the total is what it is. A minimum-charge order shows a
+                      total that does not match its own lines ("Custom Fabric
+                      Cutting": ₦10,000 of lines, ₦20,000 to pay) and the engine's
+                      explanation was being dropped on the floor. */}
+                  {noteList(quote.breakdown?.notes).length > 0 && (
+                    <ul className="pt-3 mt-3 space-y-1.5 border-t border-[#EAEAEA]" data-testid="quote-notes">
+                      {noteList(quote.breakdown?.notes).map((note) => (
+                        <li key={note} className="text-xs text-[#666666] leading-relaxed flex gap-2">
+                          <span className="text-[#FF5C00]" aria-hidden="true">·</span>
+                          <span>{note}</span>
+                        </li>
+                      ))}
+                    </ul>
                   )}
                   {(quote as any).availability && (
                     <div className="pt-3 border-t border-[#EAEAEA]">

@@ -155,7 +155,12 @@ export interface QuoteBreakdown {
   serviceType?: string;
   sla?: string;
   leadTime?: string;
-  notes?: string;
+  /**
+   * The engine's own explanation of the price — why a minimum was applied, that
+   * production starts at the next opening, that the customer supplies material.
+   * An ARRAY (it typed as `string` before, so nothing could ever read it).
+   */
+  notes?: string[];
   basePrice?: number;
   expressSurcharge?: number;
   expressApplied?: boolean;

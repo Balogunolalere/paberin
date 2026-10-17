@@ -40,6 +40,15 @@ const DELIVERY_OPTIONS: { value: DeliveryOption; label: string; hint: string }[]
   { value: 'nationwide', label: 'Nationwide waybill', hint: 'Outside Lagos' },
 ];
 
+/**
+ * The breakdown's notes as a list. The engine returns an array, but a single
+ * string must not break the price panel.
+ */
+function noteList(notes: string[] | string | null | undefined): string[] {
+  if (!notes) return [];
+  return (Array.isArray(notes) ? notes : [notes]).map((n) => String(n)).filter(Boolean);
+}
+
 function buildDeliveryBody(opt: DeliveryOption): Record<string, unknown> {
   if (opt === 'pickup') return { deliveryMethod: 'PICKUP' };
   if (opt === 'local') return { deliveryMethod: 'LOCAL_DELIVERY', deliveryDistanceKm: 10 };
@@ -519,6 +528,21 @@ export default function CalculatorPage() {
                         </span>
                       </div>
                     ))}
+
+                    {/* The engine's own explanation of the price. Without this a
+                        minimum-charge order reads as a total that does not match
+                        its lines: "Custom Fabric Cutting" is ₦10,000 but bills
+                        ₦20,000, and nothing on the page said why. */}
+                    {noteList(breakdown?.notes).length > 0 && (
+                      <ul className="pt-2 space-y-1.5 border-t border-[#EAEAEA]" data-testid="quote-notes">
+                        {noteList(breakdown?.notes).map((note) => (
+                          <li key={note} className="text-xs text-[#666666] leading-relaxed flex gap-2">
+                            <span className="text-[#FF5C00]" aria-hidden="true">·</span>
+                            <span>{note}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
                   </div>
 
                   <div className="rule my-5" />
