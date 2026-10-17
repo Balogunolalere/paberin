@@ -68,6 +68,12 @@ export default function CalculatorPage() {
   /** The service's own answers — required by the engine for most services. */
   const [selectedOptions, setSelectedOptions] = useState<Record<string, string | number>>({});
   const [optionErrors, setOptionErrors] = useState<Record<string, string>>({});
+  /**
+   * The pickup slot this estimate assumed. The price depends on it — a slot only
+   * a day or two out carries a rush surcharge — and the customer was never told
+   * which day they were being quoted for.
+   */
+  const [assumedPickup, setAssumedPickup] = useState<string | null>(null);
 
   const [breakdown, setBreakdown] = useState<QuoteBreakdown | null>(null);
   const [total, setTotal] = useState<number | null>(null);
@@ -126,6 +132,7 @@ export default function CalculatorPage() {
     setQuoteError(null);
     setSearched(true);
     try {
+      const cal = await getBusinessCalendar();
       const res = await api.getQuote({
         serviceType,
         quantity: Math.max(1, quantity || 1),
@@ -135,7 +142,11 @@ export default function CalculatorPage() {
         // calculator has no date picker — use the standard default slot
         // (now + 2 working days, one hour before closing — 16:00 Lagos by
         // default) within the CONFIGURED business calendar.
-        requestedPickupTime: defaultRequestedPickupTime(Date.now(), await getBusinessCalendar()),
+        requestedPickupTime: (() => {
+          const slot = defaultRequestedPickupTime(Date.now(), cal);
+          setAssumedPickup(slot);
+          return slot;
+        })(),
         ...buildDeliveryBody(delivery),
       });
       setBreakdown(res.breakdown || null);
@@ -528,6 +539,19 @@ export default function CalculatorPage() {
                         </span>
                       </div>
                     ))}
+
+                    {assumedPickup && (
+                      <p className="pt-2 text-xs text-[#888888]" data-testid="assumed-pickup">
+                        Estimated for pickup on{' '}
+                        <span className="text-[#666666]">
+                          {new Date(assumedPickup).toLocaleString('en-NG', {
+                            weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit', hour12: false,
+                            timeZone: 'Africa/Lagos',
+                          })}
+                        </span>
+                        . A sooner pickup costs more.
+                      </p>
+                    )}
 
                     {/* The engine's own explanation of the price. Without this a
                         minimum-charge order reads as a total that does not match
