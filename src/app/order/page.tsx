@@ -10,6 +10,7 @@ import { DesignFileThumbs } from '@/components/DesignFilePreview';
 import { usePaberinAuth } from '@/lib/auth';
 import { noteList } from '@/lib/quote-notes';
 import { groupServices } from '@/lib/service-groups';
+import { isVerbatimTextField } from '@/lib/order-form';
 import {
   api,
   formatNaira,
@@ -1558,10 +1559,13 @@ function OrderPageInner() {
                                   onChange={(e) => updateOption(field.key, e.target.value)}
                                   className="form-input resize-none"
                                 />
-                                {/* This value is reproduced verbatim on the finished piece. */}
-                                <p className="text-[11px] text-[#888888]">
-                                  Case sensitive — write it exactly as you want it produced.
-                                </p>
+                                {/* This value is reproduced verbatim on the finished piece
+                                    — true of the MESSAGE only, not of any free text. */}
+                                {isVerbatimTextField(field) && (
+                                  <p className="text-[11px] text-[#888888]">
+                                    Case sensitive — write it exactly as you want it produced.
+                                  </p>
+                                )}
                                 {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
                               </div>
                             );
@@ -1614,10 +1618,11 @@ function OrderPageInner() {
                                 onChange={(e) => updateOption(field.key, e.target.value)}
                                 className="form-input"
                               />
-                              {/* This value is reproduced verbatim on the finished piece. */}
-                              <p className="text-[11px] text-[#888888]">
-                                Case sensitive — write it exactly as you want it produced.
-                              </p>
+                              {isVerbatimTextField(field) && (
+                                <p className="text-[11px] text-[#888888]">
+                                  Case sensitive — write it exactly as you want it produced.
+                                </p>
+                              )}
                               {fieldError && <p className="text-xs text-[#E05200]">{fieldError}</p>}
                             </div>
                           );
