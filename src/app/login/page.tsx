@@ -20,14 +20,16 @@ function LoginInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get('next') || '/dashboard';
-  const { loginWithPhone, signupAsNewCustomer, customer } = usePaberinAuth();
+  const { requestLoginCode, verifyLoginCode, customer } = usePaberinAuth();
 
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
+  const [code, setCode] = useState('');
+  const [codeSent, setCodeSent] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
 
   // Already logged in → bounce to next
   useEffect(() => {
@@ -42,24 +44,26 @@ function LoginInner() {
     }
     setError(null);
     setLoading(true);
-    const result = await loginWithPhone(phone);
+    if (!codeSent) {
+      // Step 1: email a one-time code. A phone number is not a credential.
+      const result = await requestLoginCode({ phone, name: name || undefined, email: email || undefined });
+      setLoading(false);
+      if (!result.ok) {
+        setError(result.error || 'Could not send the login code.');
+        return;
+      }
+      setCodeSent(true);
+      setNotice('If that number has an email on file, a one-time code is on its way. Enter it below — it expires in 10 minutes.');
+      return;
+    }
+    // Step 2: exchange the code for a signed session token.
+    const result = await verifyLoginCode({ phone, code, name: name || undefined, email: email || undefined });
     setLoading(false);
     if (result.ok) {
       router.replace(next);
     } else {
-      setError(result.error || 'Could not log in.');
-      if (result.isNewCustomer) setShowNewCustomerForm(true);
+      setError(result.error || 'Could not verify that code.');
     }
-  };
-
-  const handleNewCustomer = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!phone.trim()) {
-      setError('Phone number is required.');
-      return;
-    }
-    signupAsNewCustomer({ phone, name: name || undefined, email: email || undefined });
-    router.push('/order');
   };
 
   return (
@@ -152,6 +156,12 @@ function LoginInner() {
                   </p>
                 </div>
 
+                {notice && (
+                  <div className="border border-[#FF5C00]/30 bg-[#FF5C00]/5 px-3 py-2 rounded text-sm text-[#333333]">
+                    {notice}
+                  </div>
+                )}
+
                 {error && (
                   <div
                     id="login-error"
@@ -162,30 +172,17 @@ function LoginInner() {
                   </div>
                 )}
 
-                <button type="submit" disabled={loading} className="btn-primary disabled:opacity-60">
-                  {loading ? 'Verifying…' : 'Continue'}
-                </button>
-              </form>
-
-              {showNewCustomerForm && (
-                <div className="pt-6 border-t border-[#EAEAEA]">
-                  <p className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666] mb-3">
-                    New Customer — Quick Setup
-                  </p>
-                  <p className="text-sm text-[#666666] mb-4">
-                    We couldn&apos;t find orders for that number. Add a name and
-                    email (optional) and head straight to the order form.
-                  </p>
-                  <form onSubmit={handleNewCustomer} className="space-y-4">
+                {!codeSent && (
+                  <>
                     <div className="space-y-2">
                       <label
-                        htmlFor="new-name"
+                        htmlFor="login-name"
                         className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]"
                       >
-                        Name <span className="text-[#888888] normal-case tracking-normal">(optional)</span>
+                        Name <span className="text-[#888888] normal-case tracking-normal">(optional — new customers)</span>
                       </label>
                       <input
-                        id="new-name"
+                        id="login-name"
                         type="text"
                         autoComplete="name"
                         value={name}
@@ -196,27 +193,61 @@ function LoginInner() {
                     </div>
                     <div className="space-y-2">
                       <label
-                        htmlFor="new-email"
+                        htmlFor="login-email"
                         className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]"
                       >
-                        Email <span className="text-[#888888] normal-case tracking-normal">(optional)</span>
+                        Email <span className="text-[#888888] normal-case tracking-normal">(new customers need this to receive a code)</span>
                       </label>
                       <input
-                        id="new-email"
+                        id="login-email"
                         type="email"
                         autoComplete="email"
                         value={email}
                         onChange={(e) => setEmail(e.target.value)}
-                        placeholder="Email (optional)"
+                        placeholder="you@example.com"
                         className="form-input"
                       />
                     </div>
-                    <button type="submit" className="btn-outline">
-                      Continue as New Customer
+                  </>
+                )}
+
+                {codeSent && (
+                  <div className="space-y-2">
+                    <label
+                      htmlFor="login-code"
+                      className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]"
+                    >
+                      <span className="text-[#FF5C00]">02</span> One-time code
+                    </label>
+                    <input
+                      id="login-code"
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      value={code}
+                      onChange={(e) => setCode(e.target.value)}
+                      placeholder="6-digit code"
+                      className="form-input"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCodeSent(false);
+                        setCode('');
+                        setNotice(null);
+                        setError(null);
+                      }}
+                      className="text-xs text-[#666666] underline hover:text-black transition-colors"
+                    >
+                      Change number
                     </button>
-                  </form>
-                </div>
-              )}
+                  </div>
+                )}
+
+                <button type="submit" disabled={loading} className="btn-primary disabled:opacity-60">
+                  {loading ? 'Checking…' : codeSent ? 'Verify code' : 'Send login code'}
+                </button>
+              </form>
 
               <div className="pt-4 border-t border-[#EAEAEA] flex items-center justify-between">
                 <Link

@@ -30,6 +30,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
+import crypto from 'crypto';
 import type { ChatResponse } from '@/lib/api';
 import {
   RateLimiter,
@@ -141,22 +142,36 @@ async function saveSessionToAdmin(params: {
   messages: { role: string; content: string }[];
   customerPhone?: string;
 }): Promise<void> {
+  // The backend only accepts transcripts signed by this storefront. Without
+  // the shared secret we skip persistence rather than send an unsigned write
+  // that anyone could forge.
+  const secret = process.env.CHAT_PERSIST_SECRET;
+  if (!secret || secret.length < 16) return;
+
+  const payload = JSON.stringify({
+    message: params.messages[params.messages.length - 1]?.content || '',
+    brand: params.brand,
+    mode: 'live',
+    history: params.messages.slice(0, -1),
+    sessionId: params.sessionId,
+    // Backend only persists — no LLM call (avoids a second model call per turn)
+    persist_only: true,
+    ...(params.customerPhone ? { customerPhone: params.customerPhone } : {}),
+  });
+  const timestamp = String(Date.now());
+  const signature = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');
+
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 5000);
   try {
     await fetch(`${ADMIN_API_URL}/api/skyal/chat`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: params.messages[params.messages.length - 1]?.content || '',
-        brand: params.brand,
-        mode: 'live',
-        history: params.messages.slice(0, -1),
-        sessionId: params.sessionId,
-        // Backend only persists — no LLM call (avoids a second model call per turn)
-        persist_only: true,
-        ...(params.customerPhone ? { customerPhone: params.customerPhone } : {}),
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        'x-persist-timestamp': timestamp,
+        'x-persist-signature': signature,
+      },
+      body: payload,
       // Short timeout — we don't want to block the customer waiting for admin save
       signal: controller.signal,
     });

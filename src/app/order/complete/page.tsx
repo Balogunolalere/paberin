@@ -122,6 +122,15 @@ function CompleteInner() {
   }
 
   // Success state — show order confirmation (even without full order details)
+  /** Encode a value before interpolating it into the printable receipt HTML. */
+  const escapeHtml = (v: unknown) =>
+    String(v ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+
   const printReceipt = () => {
     const num = order?.orderNumber || orderNum || 'N/A';
     const svc = order?.serviceLabel || 'Your order';
@@ -140,14 +149,14 @@ table{width:100%;border-collapse:collapse;margin:16px 0}td{padding:8px 0;border-
 td:last-child{text-align:right;font-weight:500}.total{font-size:18px;font-weight:700}
 .footer{margin-top:24px;font-size:12px;color:#888;text-align:center}@media print{body{margin:0;padding:20px}}</style></head><body>
 <h1>Paberin Creations</h1><div class="brand">ORDER RECEIPT</div><table>
-<tr><td>Order Number</td><td style="font-family:monospace">${num}</td></tr>
-<tr><td>Service</td><td>${svc}</td></tr>
-<tr><td>Customer</td><td>${name || '—'}</td></tr>
-<tr><td>Phone</td><td>${phone || '—'}</td></tr>
-<tr><td>Email</td><td>${email || '—'}</td></tr>
-<tr><td>Date</td><td>${date}</td></tr>
+<tr><td>Order Number</td><td style="font-family:monospace">${escapeHtml(num)}</td></tr>
+<tr><td>Service</td><td>${escapeHtml(svc)}</td></tr>
+<tr><td>Customer</td><td>${escapeHtml(name) || '—'}</td></tr>
+<tr><td>Phone</td><td>${escapeHtml(phone) || '—'}</td></tr>
+<tr><td>Email</td><td>${escapeHtml(email) || '—'}</td></tr>
+<tr><td>Date</td><td>${escapeHtml(date)}</td></tr>
 <tr><td>Status</td><td style="color:#16a34a;font-weight:600">PAID</td></tr>
-<tr class="total"><td>Total</td><td>${total}</td></tr></table>
+<tr class="total"><td>Total</td><td>${escapeHtml(total)}</td></tr></table>
 <div class="footer">Thank you for your order!<br>Paberin Creations · Wempco Rd, Ogba, Ikeja, Lagos</div></body></html>`;
     const w = window.open('', '_blank', 'width=500,height=700');
     if (w) { w.document.write(html); w.document.close(); w.onload = () => w.print(); }

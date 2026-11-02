@@ -13,6 +13,18 @@
 
 const API_URL = process.env.NEXT_PUBLIC_ADMIN_API_URL || 'https://skyalxpaberin-admin.vercel.app';
 
+/** The signed session token issued after OTP verification. */
+function getSessionToken(): string | null {
+  try {
+    const raw = typeof window !== 'undefined' ? localStorage.getItem('paberin_customer') : null;
+    if (!raw) return null;
+    const token = JSON.parse(raw)?.token;
+    return typeof token === 'string' && token ? token : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Error thrown by apiFetch, carrying the HTTP status and the backend's error
  * code. Callers must branch on these, never on the message text: deciding
@@ -54,11 +66,15 @@ export const REQUEST_TIMEOUT_MS = 30_000;
 
 export async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   let res: Response;
+  const token = getSessionToken();
   try {
     res = await fetch(`${API_URL}${path}`, {
       ...options,
       headers: {
         'Content-Type': 'application/json',
+        // Identity comes from the verified session, never from a phone number
+        // supplied in the URL or body.
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options?.headers || {}),
       },
       // Paberin is a static customer site — never cache API responses.

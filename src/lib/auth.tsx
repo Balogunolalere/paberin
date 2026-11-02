@@ -19,12 +19,14 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
-import { api, type Order, ApiError } from '@/lib/api';
+import { api, apiFetch, type Order, ApiError } from '@/lib/api';
 
 export interface PaberinCustomer {
   phone: string;
   name?: string;
   email?: string;
+  /** Signed session token issued by the admin backend after OTP verification. */
+  token?: string;
   isNew?: boolean;
   ordersCount?: number;
   lastSeen?: string;
@@ -41,6 +43,10 @@ interface PaberinAuthContextValue {
   loading: boolean;
   /** Verify phone via magic-link endpoint. Sets customer on success. */
   loginWithPhone: (phone: string) => Promise<AuthResult>;
+  /** Step 1: email a one-time code to the address on the customer's orders. */
+  requestLoginCode: (info: { phone: string; name?: string; email?: string }) => Promise<AuthResult>;
+  /** Step 2: exchange the code for a signed session token. */
+  verifyLoginCode: (info: { phone: string; code: string; name?: string; email?: string }) => Promise<AuthResult>;
   /** Stash a new customer's details locally (no server validation). */
   signupAsNewCustomer: (info: { phone: string; name?: string; email?: string }) => void;
   logout: () => void;
@@ -129,6 +135,68 @@ export function PaberinAuthProvider({ children }: { children: ReactNode }) {
     [persist]
   );
 
+  /** Step 1 — ask the backend to email a one-time code. */
+  const requestLoginCode = useCallback(
+    async (info: { phone: string; name?: string; email?: string }): Promise<AuthResult> => {
+      const phone = info.phone.trim();
+      if (!phone) return { ok: false, error: 'Enter a valid phone number.' };
+      try {
+        await apiFetch('/api/auth/otp/request', {
+          method: 'POST',
+          body: JSON.stringify({
+            phone,
+            brand: 'PABERIN',
+            ...(info.name ? { name: info.name } : {}),
+            ...(info.email ? { email: info.email } : {}),
+          }),
+        });
+        return { ok: true };
+      } catch (err: any) {
+        return { ok: false, error: err?.message || 'Could not send the login code.' };
+      }
+    },
+    []
+  );
+
+  /** Step 2 — verify the code and persist the signed session token. */
+  const verifyLoginCode = useCallback(
+    async (info: { phone: string; code: string; name?: string; email?: string }): Promise<AuthResult> => {
+      const phone = info.phone.trim();
+      const code = info.code.replace(/\D/g, '');
+      if (!phone || !/^\d{6}$/.test(code)) {
+        return { ok: false, error: 'Enter the 6-digit code from your email.' };
+      }
+      try {
+        const data = await apiFetch<{ token: string; customer: { phone?: string; name?: string; email?: string } }>(
+          '/api/auth/otp/verify',
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              phone,
+              code,
+              brand: 'PABERIN',
+              ...(info.name ? { name: info.name } : {}),
+              ...(info.email ? { email: info.email } : {}),
+            }),
+          },
+        );
+        if (!data?.token) return { ok: false, error: 'Could not verify that code. Please try again.' };
+        persist({
+          phone: data.customer?.phone || phone,
+          name: data.customer?.name || info.name,
+          email: data.customer?.email || info.email,
+          token: data.token,
+          lastSeen: new Date().toISOString(),
+          ordersCount: 0,
+        });
+        return { ok: true };
+      } catch (err: any) {
+        return { ok: false, error: err?.message || 'Could not verify that code. Please try again.' };
+      }
+    },
+    [persist]
+  );
+
   const signupAsNewCustomer = useCallback(
     (info: { phone: string; name?: string; email?: string }) => {
       const profile: PaberinCustomer = {
@@ -166,7 +234,7 @@ export function PaberinAuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <PaberinAuthContext.Provider
-      value={{ customer, loading, loginWithPhone, signupAsNewCustomer, logout, updateProfile }}
+      value={{ customer, loading, loginWithPhone, requestLoginCode, verifyLoginCode, signupAsNewCustomer, logout, updateProfile }}
     >
       {children}
     </PaberinAuthContext.Provider>
