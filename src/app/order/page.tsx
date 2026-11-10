@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, Suspense } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ScrollReveal } from '@/components/ScrollReveal';
@@ -167,6 +167,14 @@ function OrderPageInner() {
   const [services, setServices] = useState<Service[]>([]);
   const [servicesLoading, setServicesLoading] = useState(true);
   const [servicesError, setServicesError] = useState<string | null>(null);
+  const [serviceSearch, setServiceSearch] = useState('');
+  const filteredServices = useMemo(() => {
+    const q = serviceSearch.trim().toLowerCase();
+    if (!q) return services;
+    return services.filter((s) =>
+      `${s.label} ${s.description} ${s.category} ${s.type}`.toLowerCase().includes(q),
+    );
+  }, [services, serviceSearch]);
   const [form, setForm] = useState<FormState>(initialState);
   // Configurable business calendar (open/close + observed public holidays).
   const [cal, setCal] = useState<BusinessCalendar>(DEFAULT_BUSINESS_CALENDAR);
@@ -1178,6 +1186,28 @@ function OrderPageInner() {
                   </div>
                 )}
 
+                {!customMode && !servicesLoading && !servicesError && services.length > 0 && (
+                  <div className="relative mb-5">
+                    <input
+                      type="search"
+                      value={serviceSearch}
+                      onChange={(e) => setServiceSearch(e.target.value)}
+                      placeholder="Search services by name, category or description…"
+                      aria-label="Search services"
+                      data-testid="service-search"
+                      className="w-full rounded-md border border-[#EAEAEA] bg-white px-4 py-3 text-sm text-black placeholder:text-[#999999] focus:border-[#FF5C00] focus:outline-none"
+                    />
+                  </div>
+                )}
+
+                {!customMode && !servicesLoading && !servicesError && services.length > 0 && filteredServices.length === 0 && (
+                  <div className="card text-center">
+                    <p className="text-sm text-[#666666]">
+                      No services match “{serviceSearch}”. Try a shorter search.
+                    </p>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {customMode ? (
                     <div className="card col-span-full bg-[#FFF7F0] border-[#FFD9BF]">
@@ -1196,7 +1226,7 @@ function OrderPageInner() {
                       </button>
                     </div>
                   ) : (
-                    groupServices(services).map((group) => (
+                    groupServices(filteredServices).map((group) => (
                       <div key={group.category} className="col-span-full">
                         <p
                           className="font-mono text-[10px] uppercase tracking-[0.15em] text-[#888888] mt-2 mb-2"
