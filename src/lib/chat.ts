@@ -174,6 +174,19 @@ export interface ChatSpecs {
   selected_options?: Record<string, string>;
 }
 
+/** A reference image uploaded from the chat composer and carried into /order. */
+export interface ChatAttachment {
+  url: string;
+  publicId?: string;
+  name: string;
+  dataUrl?: string;
+}
+
+/** Chat attachment limits — enforced in the browser and by /api/upload. */
+export const CHAT_IMAGE_MAX = 3;
+export const CHAT_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const CHAT_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'] as const;
+
 /**
  * Minimal JSON-ish → strict JSON cleanup for model output.
  *

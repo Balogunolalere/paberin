@@ -392,6 +392,7 @@ export interface ChatMessage {
 export interface ChatRequestBody {
   message?: string;
   image_base64?: string;
+  attachments?: { url: string; publicId?: string; name: string }[];
   audio_base64?: string;
   audio_mime_type?: string;
   brand?: 'skyal' | 'paberin';

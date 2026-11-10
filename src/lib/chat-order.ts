@@ -8,7 +8,7 @@
  * was retired because it silently mis-priced bespoke jobs.
  */
 
-import type { ChatSpecs } from '@/lib/chat';
+import type { ChatSpecs, ChatAttachment } from '@/lib/chat';
 import type { Service } from '@/lib/api';
 import { normalizeOptionValues } from '@/lib/order-form';
 
@@ -108,12 +108,13 @@ const HANDOFF_KEY = 'paberin.chat-order-handoff';
 export interface ChatHandoff {
   specs: ChatSpecs;
   context?: string;
+  attachments?: ChatAttachment[];
 }
 
 /** Leave the details for the order form. Never throws: private mode can refuse. */
-export function stashChatHandoff(specs: ChatSpecs, context?: string | null): void {
+export function stashChatHandoff(specs: ChatSpecs, context?: string | null, attachments?: ChatAttachment[]): void {
   try {
-    sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ specs, context: context || '' }));
+    sessionStorage.setItem(HANDOFF_KEY, JSON.stringify({ specs, context: context || '', attachments: attachments || [] }));
   } catch {
     // Safari private mode, a full quota, storage disabled — the customer simply
     // fills the form themselves rather than hitting an error they cannot act on.
@@ -126,11 +127,18 @@ export function takeChatHandoff(): ChatHandoff | null {
     const raw = sessionStorage.getItem(HANDOFF_KEY);
     if (!raw) return null;
     sessionStorage.removeItem(HANDOFF_KEY);
-    const parsed = JSON.parse(raw) as { specs?: unknown; context?: unknown };
+    const parsed = JSON.parse(raw) as { specs?: unknown; context?: unknown; attachments?: unknown };
     if (!parsed || typeof parsed !== 'object' || !parsed.specs || typeof parsed.specs !== 'object') return null;
+    const attachments = Array.isArray(parsed.attachments)
+      ? parsed.attachments
+          .filter((a): a is { url: string; publicId?: string; name: string } =>
+            !!a && typeof a === 'object' && typeof (a as { url?: unknown }).url === 'string')
+          .map((a) => ({ url: a.url, publicId: a.publicId, name: typeof a.name === 'string' ? a.name : 'attachment' }))
+      : undefined;
     return {
       specs: parsed.specs as ChatSpecs,
       context: typeof parsed.context === 'string' && parsed.context ? parsed.context : undefined,
+      ...(attachments && attachments.length > 0 ? { attachments } : {}),
     };
   } catch {
     return null;

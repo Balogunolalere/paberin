@@ -6,12 +6,14 @@ import { ScrollReveal } from '@/components/ScrollReveal';
 import { Logo } from '@/components/Logo';
 import {
   api,
+  apiFetch,
   formatNaira,
   type ChatMessage,
   type ChatResponse,
 } from '@/lib/api';
 import { CHAT_ORDER_URL, buildChatSpecsFromCustom, buildChatSpecsFromQuote, stashChatHandoff } from '@/lib/chat-order';
-import type { ChatSpecs } from '@/lib/chat';
+import type { ChatSpecs, ChatAttachment } from '@/lib/chat';
+import { CHAT_IMAGE_MAX, CHAT_IMAGE_MAX_BYTES, CHAT_IMAGE_TYPES } from '@/lib/chat';
 import { useRouter } from 'next/navigation';
 
 /**
@@ -28,6 +30,8 @@ interface UIMessage extends ChatMessage {
   quote?: ChatResponse['quote'];
   custom?: ChatResponse['custom'];
   renderOrderNow?: boolean;
+  /** Reference images attached to this user turn. */
+  attachments?: ChatAttachment[];
   /** Message is a client-side failure notice, not an assistant reply — styled differently and never sent back as history. */
   isError?: boolean;
 }
@@ -88,6 +92,9 @@ function ChatContent() {
   const [messages, setMessages] = useState<UIMessage[]>([WELCOME_MSG]);
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string | undefined>();
   const [pendingQuote, setPendingQuote] = useState<ChatResponse['quote'] | null>(null);
@@ -95,6 +102,8 @@ function ChatContent() {
   const [openQuotes, setOpenQuotes] = useState<ChatResponse['openQuotes']>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const lastAttachmentsRef = useRef<ChatAttachment[]>([]);
   // Last customer query — passed to the order form so the customer's own
   // words (what they want, what they agreed to pay) reach the order notes.
   const lastUserQueryRef = useRef<string>('');
@@ -114,18 +123,28 @@ function ChatContent() {
     setSessionId(undefined);
     setError(null);
     setInput('');
+    setAttachments([]);
+    setAttachmentError(null);
+    lastAttachmentsRef.current = [];
     inputRef.current?.focus();
   }, []);
 
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed || sending) return;
-      lastUserQueryRef.current = trimmed;
+      const files = attachments;
+      if ((!trimmed && files.length === 0) || sending || uploading) return;
+      lastUserQueryRef.current = trimmed || '(image attached)';
+      lastAttachmentsRef.current = files.map(({ dataUrl: _dataUrl, ...rest }) => rest);
       setError(null);
       setInput('');
 
-      const userMsg: UIMessage = { id: uid(), role: 'user', content: trimmed };
+      const userMsg: UIMessage = {
+        id: uid(),
+        role: 'user',
+        content: trimmed || '(image attached)',
+        attachments: files,
+      };
       const pendingMsg: UIMessage = {
         id: uid(),
         role: 'assistant',
@@ -133,6 +152,8 @@ function ChatContent() {
         pending: true,
       };
       setMessages((prev) => [...prev, userMsg, pendingMsg]);
+      setAttachments([]);
+      setAttachmentError(null);
       setSending(true);
 
       try {
@@ -149,13 +170,22 @@ function ChatContent() {
           }
         } catch { /* ignore storage errors */ }
 
+        const attachmentNote = files.length
+          ? `\n\n[Customer attached ${files.length} reference image${files.length > 1 ? 's' : ''}: ${files.map((a) => a.url).join(' ')}]`
+          : '';
         const res = await api.sendChat({
-          message: trimmed,
+          message: `${trimmed || 'Please review the attached reference image(s).'}${attachmentNote}`,
           brand: 'paberin',
           mode: 'live',
           history,
           sessionId,
           customerPhone,
+          ...(files.length
+            ? {
+                attachments: files.map(({ dataUrl: _dataUrl, ...rest }) => rest),
+                ...(files[0].dataUrl ? { image_base64: files[0].dataUrl } : {}),
+              }
+            : {}),
         });
 
         if (sessionId !== res.sessionId) setSessionId(res.sessionId);
@@ -212,7 +242,7 @@ function ChatContent() {
         inputRef.current?.focus();
       }
     },
-    [messages, sending, sessionId]
+    [messages, sending, sessionId, attachments, uploading]
   );
 
   /**
@@ -220,9 +250,55 @@ function ChatContent() {
    * keeps only `?from=chat` — see @/lib/chat-order for why they are not in it.
    */
   const handOffToOrder = useCallback((specs: ChatSpecs) => {
-    stashChatHandoff(specs, lastUserQueryRef.current);
+    stashChatHandoff(specs, lastUserQueryRef.current, lastAttachmentsRef.current);
     router.push(CHAT_ORDER_URL);
   }, [router]);
+
+  const readDataUrl = (file: File) => new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error(`Could not read ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+
+  const onFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = '';
+    if (files.length === 0) return;
+    setAttachmentError(null);
+    if (attachments.length + files.length > CHAT_IMAGE_MAX) {
+      setAttachmentError(`You can attach up to ${CHAT_IMAGE_MAX} images.`);
+      return;
+    }
+    setUploading(true);
+    const next = [...attachments];
+    try {
+      for (const file of files) {
+        if (!(CHAT_IMAGE_TYPES as readonly string[]).includes(file.type)) {
+          setAttachmentError(`${file.name}: only PNG, JPEG or WebP images are allowed.`);
+          continue;
+        }
+        if (file.size > CHAT_IMAGE_MAX_BYTES) {
+          setAttachmentError(`${file.name}: exceeds the ${CHAT_IMAGE_MAX_BYTES / 1024 / 1024}MB limit.`);
+          continue;
+        }
+        try {
+          const dataUrl = await readDataUrl(file);
+          const uploaded = await apiFetch<{ url?: string; publicId?: string }>('/api/upload', {
+            method: 'POST',
+            body: JSON.stringify({ file: dataUrl, folder: 'paberin-designs' }),
+          });
+          if (!uploaded?.url) throw new Error('no URL returned');
+          next.push({ url: uploaded.url, publicId: uploaded.publicId, name: file.name, dataUrl });
+        } catch {
+          setAttachmentError(`${file.name}: upload failed. Please try again.`);
+        }
+      }
+      setAttachments(next);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -301,6 +377,18 @@ function ChatContent() {
                         <div className="text-sm leading-relaxed whitespace-pre-wrap">
                           {renderMarkdown(m.content)}
                         </div>
+                        {m.attachments && m.attachments.length > 0 && (
+                          <div className="mt-2 flex flex-wrap gap-2">
+                            {m.attachments.map((a, i) => (
+                              <img
+                                key={`${a.url}-${i}`}
+                                src={a.dataUrl || a.url}
+                                alt={a.name}
+                                className="max-h-40 max-w-[160px] rounded border border-current/20 object-cover"
+                              />
+                            ))}
+                          </div>
+                        )}
                         {m.isError && (
                           <p className="text-[10px] font-mono uppercase tracking-[0.12em] text-[#E05200] mt-1.5">
                             Connection issue — your message was not sent
@@ -382,7 +470,41 @@ function ChatContent() {
 
             {/* Input */}
             <div className="border-t border-[#EAEAEA] p-3 sm:p-4 bg-white">
+              {attachments.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-2">
+                  {attachments.map((a, i) => (
+                    <div key={`${a.url}-${i}`} className="relative inline-flex items-center gap-2 rounded border border-[#EAEAEA] p-1 pr-2">
+                      <img src={a.dataUrl || a.url} alt={a.name} className="h-9 w-9 object-cover" />
+                      <span className="max-w-[110px] truncate text-[11px] text-[#666666]">{a.name}</span>
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((prev) => prev.filter((_, j) => j !== i))}
+                        className="text-[#999999] hover:text-black"
+                        aria-label={`Remove ${a.name}`}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path d="M2 2l8 8M10 2l-8 8" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {attachmentError && <p className="mb-2 text-xs text-[#E05200]">{attachmentError}</p>}
               <div className="flex items-end gap-2">
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" multiple onChange={onFiles} className="hidden" />
+                <button
+                  type="button"
+                  onClick={() => fileRef.current?.click()}
+                  disabled={sending || uploading}
+                  className="mb-0.5 flex h-10 w-10 items-center justify-center rounded-full border border-[#EAEAEA] text-[#666666] hover:border-[#FF5C00] hover:text-[#FF5C00] disabled:opacity-40"
+                  aria-label="Attach reference images"
+                  title={`Attach up to ${CHAT_IMAGE_MAX} images (5MB each)`}
+                >
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                </button>
                 <textarea
                   ref={inputRef}
                   value={input}
@@ -395,7 +517,7 @@ function ChatContent() {
                 />
                 <button
                   onClick={() => send(input)}
-                  disabled={sending || !input.trim()}
+                  disabled={sending || uploading || (!input.trim() && attachments.length === 0)}
                   className="btn-primary h-11 w-11 !px-0 flex-shrink-0 disabled:opacity-50"
                   aria-label="Send message"
                 >

@@ -177,6 +177,7 @@ function OrderPageInner() {
   const [paymentError, setPaymentError] = useState<string | null>(null);
   const [createdOrder, setCreatedOrder] = useState<Order | null>(null);
   const [uploadFiles, setUploadFiles] = useState<{ name: string; data: string }[]>([]);
+  const [preloadedFiles, setPreloadedFiles] = useState<{ url: string; publicId?: string; name: string }[]>([]);
   /** Products already added to this order (see ExtraItem). */
   const [extraItems, setExtraItems] = useState<ExtraItem[]>([]);
   /**
@@ -283,6 +284,11 @@ function OrderPageInner() {
     try {
       const specs = handoff.specs;
       const context = handoff.context ?? null;
+      if (handoff.attachments?.length) {
+        setPreloadedFiles(
+          handoff.attachments.slice(0, 5).map((a) => ({ url: a.url, publicId: a.publicId, name: a.name })),
+        );
+      }
       chatPrefillApplied.current = true;
       // A valid pickup time given in chat wins over the default.
       const pickupTime =
@@ -745,9 +751,13 @@ function OrderPageInner() {
       const MAX_TOTAL_SIZE = 25 * 1024 * 1024;
 
       let designFileUrl: string | undefined;
-      const uploadedFiles: { url: string; publicId: string; name: string }[] = [];
+      const uploadedFiles: { url: string; publicId: string; name: string }[] = preloadedFiles.map((f) => ({
+        url: f.url,
+        publicId: f.publicId || '',
+        name: f.name,
+      }));
 
-      if (uploadFiles.length > MAX_FILES) {
+      if (preloadedFiles.length + uploadFiles.length > MAX_FILES) {
         setError(`Maximum ${MAX_FILES} files allowed.`);
         setSubmitting(false);
         return;
