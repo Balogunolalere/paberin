@@ -1215,6 +1215,14 @@ function OrderPageInner() {
                             : ''
                         }`}
                       >
+                        {s.imageUrl ? (
+                          <img
+                            src={s.imageUrl}
+                            alt={s.label}
+                            loading="lazy"
+                            className="w-full h-36 object-cover rounded-md mb-3"
+                          />
+                        ) : null}
                         <div className="flex items-start justify-between mb-2">
                           <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
                             {s.category}

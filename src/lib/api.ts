@@ -151,6 +151,8 @@ export interface Service {
   type: string;
   label: string;
   description: string;
+  /** Optional product photo shown on the service picker. */
+  imageUrl?: string | null;
   category: string;
   basePriceNaira: number;
   unit: string;
