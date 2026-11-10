@@ -153,6 +153,8 @@ export interface Service {
   description: string;
   /** Optional product photo shown on the service picker. */
   imageUrl?: string | null;
+  /** Gallery photos; overrides imageUrl when present. */
+  images?: string[];
   category: string;
   basePriceNaira: number;
   unit: string;

@@ -7,6 +7,7 @@ import { ScrollReveal } from '@/components/ScrollReveal';
 import { AvailabilityLine } from '@/components/AvailabilityLine';
 import { AddressPicker } from '@/components/AddressPicker';
 import { DesignFileThumbs } from '@/components/DesignFilePreview';
+import { ServiceImageCarousel } from '@/components/ServiceImageCarousel';
 import { usePaberinAuth } from '@/lib/auth';
 import { noteList } from '@/lib/quote-notes';
 import { groupServices } from '@/lib/service-groups';
@@ -1206,23 +1207,19 @@ function OrderPageInner() {
                         </p>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           {group.services.map((s) => (
-                      <button
+                      <div
                         key={s.id}
+                        role="button"
+                        tabIndex={0}
                         onClick={() => selectService(s)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectService(s); } }}
                         className={`card text-left hover-lift transition-all ${
                           form.serviceType === s.type
                             ? 'border-[#FF5C00] ring-1 ring-[#FF5C00]'
                             : ''
                         }`}
                       >
-                        {s.imageUrl ? (
-                          <img
-                            src={s.imageUrl}
-                            alt={s.label}
-                            loading="lazy"
-                            className="w-full h-36 object-cover rounded-md mb-3"
-                          />
-                        ) : null}
+                        <ServiceImageCarousel images={s.images} alt={s.label} />
                         <div className="flex items-start justify-between mb-2">
                           <p className="font-mono text-[10px] uppercase tracking-[0.12em] text-[#888888]">
                             {s.category}
@@ -1244,7 +1241,7 @@ function OrderPageInner() {
                             <span className="text-[#FF5C00]">Express available</span>
                           )}
                         </div>
-                              </button>
+                              </div>
                           ))}
                         </div>
                       </div>
