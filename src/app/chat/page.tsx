@@ -135,7 +135,9 @@ function ChatContent() {
       const files = attachments;
       if ((!trimmed && files.length === 0) || sending || uploading) return;
       lastUserQueryRef.current = trimmed || '(image attached)';
-      lastAttachmentsRef.current = files.map(({ dataUrl: _dataUrl, ...rest }) => rest);
+      if (files.length > 0) {
+        lastAttachmentsRef.current = files.map(({ dataUrl: _dataUrl, ...rest }) => rest);
+      }
       setError(null);
       setInput('');
 

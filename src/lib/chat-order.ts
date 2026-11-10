@@ -173,9 +173,22 @@ export const CHAT_ORDER_URL = '/order?from=chat';
 export function buildChatSpecsFromQuote(quote: Record<string, unknown> | null | undefined): ChatSpecs {
   const b = (quote?.breakdown || {}) as Record<string, unknown>;
   const specs: ChatSpecs = {
-    service_type: typeof b.serviceType === 'string' ? b.serviceType : null,
-    quantity: typeof b.quantity === 'number' && b.quantity > 0 ? b.quantity : 1,
-    sla: b.sla === 'Express' ? 'Express' : 'Standard',
+    service_type:
+      typeof b.serviceType === 'string'
+        ? b.serviceType
+        : typeof quote?.service_type === 'string'
+          ? quote.service_type
+          : null,
+    quantity:
+      typeof b.quantity === 'number' && b.quantity > 0
+        ? b.quantity
+        : typeof quote?.quantity === 'number' && quote.quantity > 0
+          ? quote.quantity
+          : 1,
+    sla:
+      b.sla === 'Express' || quote?.sla === 'Express'
+        ? 'Express'
+        : 'Standard',
   };
   if (quote?.selected_options && typeof quote.selected_options === 'object') {
     specs.selected_options = quote.selected_options as Record<string, string>;

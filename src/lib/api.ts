@@ -411,6 +411,14 @@ export interface ChatResponse {
     bulk_discount?: number;
     breakdown?: QuoteBreakdown;
     summary?: string;
+    /** Chat choices carried into /order so the customer does not re-enter them. */
+    selected_options?: Record<string, string>;
+    requested_pickup_time?: string;
+    delivery?: 'PICKUP' | 'LOCAL_DELIVERY';
+    delivery_address?: string;
+    service_type?: string | null;
+    quantity?: number;
+    sla?: 'Standard' | 'Express';
   };
   render_order_now?: boolean;
   /** Engine-extracted specs when no catalog match — UI offers a custom order. */

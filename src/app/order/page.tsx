@@ -1707,6 +1707,12 @@ function OrderPageInner() {
                     <label className="font-mono text-[11px] uppercase tracking-[0.15em] text-[#666666]">
                       <span className="text-[#FF5C00]">05</span> Design Files <span className="lowercase text-[10px]">(up to 5, max 10MB each)</span>
                     </label>
+                    {preloadedFiles.length > 0 && (
+                      <p className="text-xs text-[#666666]">
+                        {preloadedFiles.length} image{preloadedFiles.length > 1 ? 's' : ''} attached from chat:{" "}
+                        {preloadedFiles.map((f) => f.name).join(", ")}
+                      </p>
+                    )}
                     <div className="flex flex-col gap-2">
                       <input
                         ref={fileInputRef}
