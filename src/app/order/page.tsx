@@ -8,6 +8,7 @@ import { AvailabilityLine } from '@/components/AvailabilityLine';
 import { AddressPicker } from '@/components/AddressPicker';
 import { DesignFileThumbs } from '@/components/DesignFilePreview';
 import { ServiceImageCarousel } from '@/components/ServiceImageCarousel';
+import { CustomRequestDialog } from '@/components/CustomRequestDialog';
 import { usePaberinAuth } from '@/lib/auth';
 import { noteList } from '@/lib/quote-notes';
 import { groupServices } from '@/lib/service-groups';
@@ -210,6 +211,7 @@ function OrderPageInner() {
   // Custom job mode ("Something else" / chat handoff with no catalog match):
   // describe the job, we price it via rules or confirm pricing quickly.
   const [customMode, setCustomMode] = useState(false);
+  const [customRequestOpen, setCustomRequestOpen] = useState(false);
   const [customDescription, setCustomDescription] = useState('');
   const [customMaterial, setCustomMaterial] = useState('');
   const [customDimensions, setCustomDimensions] = useState('');
@@ -1281,20 +1283,7 @@ function OrderPageInner() {
 
                 {!customMode && (
                   <button
-                    onClick={() => {
-                      // Clear any catalog selection — a custom job is priced
-                      // by the team (QUOTING), never against a catalog service.
-                      setForm((prev) => ({
-                        ...prev,
-                        serviceType: '',
-                        serviceName: '',
-                        selectedVariant: '',
-                        selectedOptions: {},
-                      }));
-                      setQuote(null);
-                      setCustomMode(true);
-                      setStep(2);
-                    }}
+                    onClick={() => setCustomRequestOpen(true)}
                     className="card w-full text-left hover-lift transition-all border-dashed mt-3"
                   >
                     <div className="flex items-start justify-between">
@@ -2283,6 +2272,12 @@ function OrderPageInner() {
           </div>
         </div>
       </div>
+
+      <CustomRequestDialog
+        open={customRequestOpen}
+        onClose={() => setCustomRequestOpen(false)}
+        brand="PABERIN"
+      />
     </div>
   );
 }
