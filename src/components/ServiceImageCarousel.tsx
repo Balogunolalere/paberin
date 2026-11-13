@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { cloudinaryImage } from '@/lib/images';
 
 /**
@@ -98,7 +99,7 @@ export function ServiceImageCarousel({ images, alt }: { images?: string[] | null
         )}
       </div>
 
-      {expanded && (
+      {expanded && typeof document !== 'undefined' && createPortal(
         <div
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4"
           onClick={(e) => { e.stopPropagation(); setExpanded(false); }}
@@ -154,7 +155,8 @@ export function ServiceImageCarousel({ images, alt }: { images?: string[] | null
               </div>
             </>
           )}
-        </div>
+        </div>,
+        document.body,
       )}
     </>
   );
