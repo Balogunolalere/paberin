@@ -32,6 +32,11 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${GeistSans.variable} ${GeistMono.variable}`}>
+      <head>
+        {/* Service photos are served from Cloudinary; open the connection
+            while the HTML is still parsing. */}
+        <link rel="preconnect" href="https://res.cloudinary.com" crossOrigin="" />
+      </head>
       <body className="bg-white text-black font-sans antialiased">
         <a
           href="#main"

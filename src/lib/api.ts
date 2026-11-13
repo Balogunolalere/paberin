@@ -77,8 +77,9 @@ export async function apiFetch<T>(path: string, options?: RequestInit): Promise<
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         ...(options?.headers || {}),
       },
-      // Paberin is a static customer site — never cache API responses.
-      cache: 'no-store',
+      // Order and profile data must never be cached; the catalogue opts in
+      // explicitly (getServices) because it is the same for every visitor.
+      cache: options?.cache ?? 'no-store',
       // A caller may pass its own signal (a longer upload, say); ours only
       // applies when they have not.
       signal: options?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -442,7 +443,7 @@ export interface ChatResponse {
 
 export const api = {
   /** List active PABERIN services. */
-  getServices: () => apiFetch<Service[]>(`/api/services?brand=PABERIN`),
+  getServices: () => apiFetch<Service[]>(`/api/services?brand=PABERIN`, { cache: 'default' }),
 
   /** Calculate a price quote. `body.brand` is forced to PABERIN. */
   /**

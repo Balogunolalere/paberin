@@ -8,6 +8,7 @@ import { AvailabilityLine } from '@/components/AvailabilityLine';
 import { AddressPicker } from '@/components/AddressPicker';
 import { DesignFileThumbs } from '@/components/DesignFilePreview';
 import { ServiceImageCarousel } from '@/components/ServiceImageCarousel';
+import { cloudinaryImage } from '@/lib/images';
 import { CustomRequestDialog } from '@/components/CustomRequestDialog';
 import { usePaberinAuth } from '@/lib/auth';
 import { noteList } from '@/lib/quote-notes';
@@ -1539,9 +1540,10 @@ function OrderPageInner() {
                                           {c.image ? (
                                             /* eslint-disable-next-line @next/next/no-img-element -- choice images are arbitrary admin-hosted URLs; next/image remotePatterns can't enumerate them */
                                             <img
-                                              src={c.image}
+                                              src={cloudinaryImage(c.image, 320)}
                                               alt=""
                                               loading="lazy"
+                                              decoding="async"
                                               referrerPolicy="no-referrer"
                                               className="w-full aspect-square object-cover rounded-md border border-[#EAEAEA] bg-[#F7F7F7]"
                                             />
